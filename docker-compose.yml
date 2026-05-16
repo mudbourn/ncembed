@@ -1,0 +1,9 @@
+services:
+  ncembed:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      # Point this at your Nextcloud instance
+      - NEXTCLOUD_URL=https://your.nextcloud.example.com

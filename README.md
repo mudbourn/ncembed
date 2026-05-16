@@ -1,6 +1,6 @@
 # ncembed
 
-A tiny proxy that turns Nextcloud share links into embeddable video/image links for Discord, WhatsApp, etc.
+A proxy that turns Nextcloud share links into embeddable video/image links for Discord, WhatsApp, etc.
 
 ## How it works
 

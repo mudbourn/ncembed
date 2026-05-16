@@ -1,5 +1,6 @@
 import os
 import io
+import html
 import mimetypes
 import struct
 import requests
@@ -12,12 +13,12 @@ app = Flask(__name__)
 NEXTCLOUD_URL   = os.environ.get("NEXTCLOUD_URL",    "https://your.nextcloud.example.com")
 
 # ── Embed branding (set these in Coolify) ────────────────────────────────────
-EMBED_SITE_NAME   = os.environ.get("EMBED_SITE_NAME",   "My Nextcloud")
-EMBED_TITLE       = os.environ.get("EMBED_TITLE",       "")          # shown above the filename; leave blank to use filename only
+EMBED_SITE_NAME   = html.escape(os.environ.get("EMBED_SITE_NAME",   "My Nextcloud"))
+EMBED_TITLE       = html.escape(os.environ.get("EMBED_TITLE",       ""))
 EMBED_AUTHOR_URL  = os.environ.get("EMBED_AUTHOR_URL",  NEXTCLOUD_URL)
-EMBED_AUTHOR_ICON = os.environ.get("EMBED_AUTHOR_ICON", "")          # URL to small icon shown next to site name
-EMBED_THUMBNAIL   = os.environ.get("EMBED_THUMBNAIL",   "")          # URL to thumbnail shown beside embed
-EMBED_COLOR       = os.environ.get("EMBED_COLOR",       "#C2185B")   # hex colour for the embed accent bar
+EMBED_AUTHOR_ICON = os.environ.get("EMBED_AUTHOR_ICON", "")
+EMBED_THUMBNAIL   = os.environ.get("EMBED_THUMBNAIL",   "")
+EMBED_COLOR       = os.environ.get("EMBED_COLOR",       "#C2185B")
 
 def get_share_info(token):
     """Fetch share metadata via Nextcloud's public WebDAV endpoint (no auth needed)."""

@@ -168,14 +168,10 @@ def embed(token):
         body_media = f'<video controls autoplay style="max-width:100%;max-height:100vh" src="{direct_url}"></video>'
 
     elif is_image(mimetype, filename):
-        w, h = get_image_dimensions(direct_url)
-        width_tag = f'  <meta property="og:image:width" content="{w}">' if w else ""
-        height_tag = f'  <meta property="og:image:height" content="{h}">' if h else ""
+        preview_url = f"{NEXTCLOUD_URL}/s/{token}/preview"
         og_media = f"""
   <meta property="og:type" content="website">
-  <meta property="og:image" content="{direct_url}">
-{width_tag}
-{height_tag}"""
+  <meta property="og:image" content="{preview_url}">"""
         og_thumbnail = ""  # image IS the embed, don't also show thumbnail
         twitter_card = "summary_large_image"
         body_media = f'<img style="max-width:100%;max-height:100vh" src="{direct_url}">'

@@ -2,6 +2,7 @@ import os
 import io
 import html
 import mimetypes
+import random
 import struct
 import requests
 import xml.etree.ElementTree as ET
@@ -13,8 +14,11 @@ app = Flask(__name__)
 NEXTCLOUD_URL   = os.environ.get("NEXTCLOUD_URL",    "https://your.nextcloud.example.com")
 
 # ── Embed branding (set these in Coolify) ────────────────────────────────────
-EMBED_SITE_NAME   = html.escape(os.environ.get("EMBED_SITE_NAME",   "My Nextcloud"))
-EMBED_TITLE       = html.escape(os.environ.get("EMBED_TITLE",       ""))
+EMBED_SITE_NAME   = os.environ.get("EMBED_SITE_NAME",   "My Nextcloud")
+# Pipe-separated list of titles — one is picked randomly per request.
+# Example: "look mom! no subscription!|shared from the cloud|enjoy"
+_raw_titles       = os.environ.get("EMBED_TITLE", "")
+EMBED_TITLES      = [t.strip() for t in _raw_titles.split("|") if t.strip()]
 EMBED_AUTHOR_URL  = os.environ.get("EMBED_AUTHOR_URL",  NEXTCLOUD_URL)
 EMBED_AUTHOR_ICON = os.environ.get("EMBED_AUTHOR_ICON", "")
 EMBED_THUMBNAIL   = os.environ.get("EMBED_THUMBNAIL",   "")
@@ -150,10 +154,12 @@ def embed(token):
     direct_url = get_direct_url(token)
     page_url = request.url
 
-    # Title: custom EMBED_TITLE if set, otherwise just the filename
-    title = EMBED_TITLE if EMBED_TITLE else (filename or f"Shared file ({token})")
+    # Title: random pick from EMBED_TITLES if set, otherwise filename
+    chosen = html.escape(random.choice(EMBED_TITLES)) if EMBED_TITLES else ""
+    title = chosen or html.escape(filename or f"Shared file ({token})")
     # Description is always the filename
-    description = filename or token
+    description = html.escape(filename or token)
+    site_name = html.escape(EMBED_SITE_NAME)
 
     og_thumbnail = f'<meta property="og:image" content="{EMBED_THUMBNAIL}">' if EMBED_THUMBNAIL else ""
 
@@ -182,8 +188,8 @@ def embed(token):
         twitter_card = "summary"
         body_media = f'<p style="color:#fff;font-family:sans-serif">Download: <a href="{direct_url}" style="color:#6cf">{filename or token}</a></p>'
 
-    html = HTML_TEMPLATE.format(
-        site_name=EMBED_SITE_NAME,
+    html_out = HTML_TEMPLATE.format(
+        site_name=site_name,
         title=title,
         description=description,
         author_url=EMBED_AUTHOR_URL,
@@ -195,7 +201,7 @@ def embed(token):
         body_media=body_media,
         page_url=page_url,
     )
-    return Response(html, mimetype="text/html")
+    return Response(html_out, mimetype="text/html")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

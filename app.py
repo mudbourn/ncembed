@@ -1,27 +1,39 @@
 import os
 import mimetypes
 import requests
-from flask import Flask, Response, abort, request
-from urllib.parse import urljoin
+import xml.etree.ElementTree as ET
+from flask import Flask, Response, request
 
 app = Flask(__name__)
 
 NEXTCLOUD_URL = os.environ.get("NEXTCLOUD_URL", "https://your.nextcloud.example.com")
 
 def get_share_info(token):
-    """Fetch share metadata from Nextcloud's OCS API."""
-    api_url = f"{NEXTCLOUD_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares/{token}"
+    """Fetch share metadata via Nextcloud's public WebDAV endpoint (no auth needed)."""
+    webdav_url = f"{NEXTCLOUD_URL}/public.php/webdav/"
+    propfind_body = """<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+  <d:prop>
+    <d:displayname/>
+    <d:getcontenttype/>
+  </d:prop>
+</d:propfind>"""
     try:
-        r = requests.get(api_url, headers={"OCS-APIRequest": "true"}, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        ocs = data.get("ocs", {})
-        if ocs.get("meta", {}).get("statuscode") == 200:
-            share = ocs["data"]
-            return {
-                "name": share.get("item_source_name") or share.get("file_target", "").lstrip("/"),
-                "mimetype": share.get("mimetype", ""),
-            }
+        r = requests.request(
+            "PROPFIND",
+            webdav_url,
+            data=propfind_body,
+            auth=(token, ""),
+            headers={"Depth": "0", "Content-Type": "application/xml"},
+            timeout=10,
+        )
+        if r.status_code not in (200, 207):
+            return None
+        root = ET.fromstring(r.text)
+        ns = {"d": "DAV:"}
+        name = root.findtext(".//d:displayname", namespaces=ns) or ""
+        mimetype = root.findtext(".//d:getcontenttype", namespaces=ns) or ""
+        return {"name": name, "mimetype": mimetype}
     except Exception:
         pass
     return None

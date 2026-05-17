@@ -146,7 +146,7 @@ def index():
         mimetype="text/html"
     )
 
-@app.route("/embed/<token>")
+@app.route("/s/<token>")
 def embed(token):
     info = get_share_info(token)
     mimetype = info["mimetype"] if info else ""

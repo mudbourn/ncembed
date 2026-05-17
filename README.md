@@ -13,7 +13,7 @@ page and embeds the media inline.
 
 ### Option A — Coolify (recommended)
 
-1. Push this repo to a private GitHub/GitLab repository. (repo link: https://github.com/mudbourn/ncembed)
+1. Push this repo to a private GitHub/GitLab repository.
 2. In Coolify, add a new resource pointing at the repo.
 3. Set your environment variables in Coolify's UI (see below).
 4. Assign a subdomain (e.g. `share.yournextcloud.com`) — Coolify handles SSL and Traefik automatically.

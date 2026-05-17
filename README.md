@@ -5,9 +5,9 @@ A proxy that turns Nextcloud share links into embeddable video/image links for D
 ## How it works
 
 Nextcloud's share pages don't include Open Graph video tags, so Discord can't embed videos inline.
-This service sits alongside Nextcloud: you give it a share token, it serves an HTML page with the
-right `og:video` or `og:image` tags pointing at Nextcloud's direct file URL. Discord scrapes that
-page and embeds the media inline.
+This service sits alongside Nextcloud: you give it a share token, and it will serve an HTML page with the
+right `og:video` or `og:image` tags pointing at Nextcloud's direct file URL. Discord will then scrape that
+page and embed the media inline.
 
 ## Setup
 

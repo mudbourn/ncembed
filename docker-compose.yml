@@ -5,5 +5,16 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # Point this at your Nextcloud instance
       - NEXTCLOUD_URL=https://your.nextcloud.example.com
+      - EMBED_SITE_NAME=My Nextcloud
+      - EMBED_TITLE=
+      - EMBED_AUTHOR_URL=
+      - EMBED_AUTHOR_ICON=
+      - EMBED_THUMBNAIL=
+      - EMBED_COLOR=#C2185B
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

@@ -4,6 +4,8 @@ import html
 import mimetypes
 import random
 import struct
+import time
+import threading
 import requests
 import xml.etree.ElementTree as ET
 from flask import Flask, Response, request
@@ -24,8 +26,30 @@ EMBED_AUTHOR_ICON = os.environ.get("EMBED_AUTHOR_ICON", "")
 EMBED_THUMBNAIL   = os.environ.get("EMBED_THUMBNAIL",   "")
 EMBED_COLOR       = os.environ.get("EMBED_COLOR",       "#C2185B")
 
+# ── Share info cache ─────────────────────────────────────────────────────────
+# Caches WebDAV PROPFIND results in memory to avoid round-tripping Nextcloud
+# on every request (Discord scrapes the same URL multiple times).
+_CACHE_TTL = 300  # seconds — re-fetch after 5 minutes
+_cache: dict = {}
+_cache_lock = threading.Lock()
+
+def _cache_get(token):
+    with _cache_lock:
+        entry = _cache.get(token)
+        if entry and time.monotonic() - entry["ts"] < _CACHE_TTL:
+            return entry["data"]
+    return None
+
+def _cache_set(token, data):
+    with _cache_lock:
+        _cache[token] = {"data": data, "ts": time.monotonic()}
+
 def get_share_info(token):
     """Fetch share metadata via Nextcloud's public WebDAV endpoint (no auth needed)."""
+    cached = _cache_get(token)
+    if cached is not None:
+        return cached
+
     webdav_url = f"{NEXTCLOUD_URL}/public.php/webdav/"
     propfind_body = """<?xml version="1.0"?>
 <d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
@@ -49,7 +73,9 @@ def get_share_info(token):
         ns = {"d": "DAV:"}
         name = root.findtext(".//d:displayname", namespaces=ns) or ""
         mimetype = root.findtext(".//d:getcontenttype", namespaces=ns) or ""
-        return {"name": name, "mimetype": mimetype}
+        result = {"name": name, "mimetype": mimetype}
+        _cache_set(token, result)
+        return result
     except Exception:
         pass
     return None
@@ -142,9 +168,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 @app.route("/")
 def index():
     return Response(
-        "<h2>ncembed</h2><p>Usage: <code>/embed/&lt;nextcloud-share-token&gt;</code></p>",
+        "<h2>ncembed</h2><p>Usage: <code>/s/&lt;nextcloud-share-token&gt;</code></p>",
         mimetype="text/html"
     )
+
+@app.route("/health")
+def health():
+    return Response("ok", status=200, mimetype="text/plain")
 
 @app.route("/s/<token>")
 def embed(token):

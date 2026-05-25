@@ -52,7 +52,7 @@ page and embed the media inline.
    https://share.yournextcloud.com/s/ABC123xyz
    ```
 
-3. Paste the ncembed URL in Discord, WhatsApp, iMessage, etc.. it will embed and play inline.
+3. Paste the ncembed URL in Discord, WhatsApp, iMessage, or whatever other service. It will embed and play inline.
 
 ## Health check
 

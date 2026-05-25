@@ -185,10 +185,10 @@ def embed(token):
     page_url = request.url
 
     # Title: random pick from EMBED_TITLES if set, otherwise filename
-    chosen = html.escape(random.choice(EMBED_TITLES)) if EMBED_TITLES else ""
+    chosen = html.escape(random.choice(EMBED_TITLES), quote=False) if EMBED_TITLES else ""
     title = chosen or html.escape(filename or f"Shared file ({token})")
     # Description is always the filename
-    description = html.escape(filename or token)
+    description = html.escape(filename or token, quote=False)
     site_name = html.escape(EMBED_SITE_NAME, quote=False)
 
     og_thumbnail = f'<meta property="og:image" content="{EMBED_THUMBNAIL}">' if EMBED_THUMBNAIL else ""

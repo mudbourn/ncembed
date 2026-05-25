@@ -189,7 +189,7 @@ def embed(token):
     title = chosen or html.escape(filename or f"Shared file ({token})")
     # Description is always the filename
     description = html.escape(filename or token)
-    site_name = html.escape(EMBED_SITE_NAME)
+    site_name = html.escape(EMBED_SITE_NAME, quote=False)
 
     og_thumbnail = f'<meta property="og:image" content="{EMBED_THUMBNAIL}">' if EMBED_THUMBNAIL else ""
 

@@ -88,6 +88,12 @@ ffmpeg -i /path/to/input.mp4 \
 
 Adjust `-crf` to trade off quality vs file size. lower is higher quality and larger (18 is near-lossless, 26 is a good balance, 30 is smaller but noticeably compressed). If your output is still over 24MB, increase the crf value or trim the clip.
 
+If it complains about an unsupported 'chnl' box, run this command first.
+
+```bash
+avconvert --source /path/to/input.mp4 --output /path/to/ouptut.m4v --preset PresetHEVCHighestQuality
+```
+
 ## Health check
 
 The service exposes a health endpoint at `/health` that returns `ok` with a 200 status.

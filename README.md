@@ -73,17 +73,7 @@ Discord has strict requirements for inline video playback. Videos that don't mee
 ### ffmpeg command
 
 ```bash
-ffmpeg -i /path/to/input.mp4 \
-  -c:v libx264 \
-  -profile:v main \
-  -level 4.0 \
-  -pix_fmt yuv420p \
-  -movflags faststart \
-  -crf 26 \
-  -r 30 \
-  -c:a aac \
-  -b:a 128k \
-  /path/to/output.mp4
+ffmpeg -i /path/to/input.mp4 -c:v libx264 -profile:v main -level 4.0 -pix_fmt yuv420p -movflags faststart -crf 26 -r 30 -c:a aac -b:a 128k /path/to/output.mp4
 ```
 
 Adjust `-crf` to trade off quality vs file size. lower is higher quality and larger (18 is near-lossless, 26 is a good balance, 30 is smaller but noticeably compressed). If your output is still over 24MB, increase the crf value or trim the clip.

@@ -19,7 +19,7 @@ NEXTCLOUD_URL   = os.environ.get("NEXTCLOUD_URL",    "https://your.nextcloud.exa
 EMBED_SITE_NAME   = os.environ.get("EMBED_SITE_NAME",   "My Nextcloud")
 # Pipe-separated list of titles — one is picked randomly per request.
 # Example: "look mom! no subscription!|shared from the cloud|enjoy"
-_raw_titles       = os.environ.get("EMBED_TITLE", "")
+_raw_titles       = os.environ.get("EMBED_TITLES", os.environ.get("EMBED_TITLE", ""))
 EMBED_TITLES      = [t.strip() for t in _raw_titles.split("|") if t.strip()]
 EMBED_AUTHOR_URL  = os.environ.get("EMBED_AUTHOR_URL",  NEXTCLOUD_URL)
 EMBED_AUTHOR_ICON = os.environ.get("EMBED_AUTHOR_ICON", "")

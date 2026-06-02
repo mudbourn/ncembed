@@ -23,13 +23,19 @@ _raw_titles       = os.environ.get("EMBED_TITLE", "")
 EMBED_TITLES      = [t.strip() for t in _raw_titles.split("|") if t.strip()]
 EMBED_AUTHOR_URL  = os.environ.get("EMBED_AUTHOR_URL",  NEXTCLOUD_URL)
 EMBED_AUTHOR_ICON = os.environ.get("EMBED_AUTHOR_ICON", "")
-EMBED_THUMBNAIL   = os.environ.get("EMBED_THUMBNAIL",   "")
 EMBED_COLOR       = os.environ.get("EMBED_COLOR",       "#C2185B")
 
+# Pipe-separated thumbnails and their paired hex colors.
+# Example: EMBED_THUMBNAILS=https://example.com/a.jpg|https://example.com/b.jpg
+# Example: EMBED_THUMBNAIL_COLORS=#ff0000|#00ff00
+# If colors are fewer than thumbnails, EMBED_COLOR is used as fallback.
+_raw_thumbnails   = os.environ.get("EMBED_THUMBNAILS", os.environ.get("EMBED_THUMBNAIL", ""))
+EMBED_THUMBNAILS  = [t.strip() for t in _raw_thumbnails.split("|") if t.strip()]
+_raw_thumb_colors = os.environ.get("EMBED_THUMBNAIL_COLORS", "")
+EMBED_THUMBNAIL_COLORS = [c.strip() for c in _raw_thumb_colors.split("|") if c.strip()]
+
 # ── Share info cache ─────────────────────────────────────────────────────────
-# Caches WebDAV PROPFIND results in memory to avoid round-tripping Nextcloud
-# on every request (Discord scrapes the same URL multiple times).
-_CACHE_TTL = 300  # seconds — re-fetch after 5 minutes
+_CACHE_TTL = 300  # seconds
 _cache: dict = {}
 _cache_lock = threading.Lock()
 
@@ -45,7 +51,6 @@ def _cache_set(token, data):
         _cache[token] = {"data": data, "ts": time.monotonic()}
 
 def get_share_info(token):
-    """Fetch share metadata via Nextcloud's public WebDAV endpoint (no auth needed)."""
     cached = _cache_get(token)
     if cached is not None:
         return cached
@@ -81,10 +86,8 @@ def get_share_info(token):
     return None
 
 def get_image_dimensions(url):
-    """Try to read image dimensions by fetching just enough bytes."""
     try:
         r = requests.get(url, stream=True, timeout=10)
-        # Read up to 64KB — enough for most image headers
         chunk = b""
         for data in r.iter_content(chunk_size=1024):
             chunk += data
@@ -93,12 +96,10 @@ def get_image_dimensions(url):
         r.close()
         buf = io.BytesIO(chunk)
 
-        # PNG: 8 byte sig + IHDR chunk with width/height at bytes 16-24
         if chunk[:8] == b'\x89PNG\r\n\x1a\n':
             w, h = struct.unpack('>II', chunk[16:24])
             return w, h
 
-        # JPEG: scan for SOF marker
         if chunk[:2] == b'\xff\xd8':
             i = 2
             while i < len(chunk) - 8:
@@ -111,7 +112,6 @@ def get_image_dimensions(url):
                 seg_len = struct.unpack('>H', chunk[i+2:i+4])[0]
                 i += 2 + seg_len
 
-        # GIF: width/height at bytes 6-10
         if chunk[:6] in (b'GIF87a', b'GIF89a'):
             w, h = struct.unpack('<HH', chunk[6:10])
             return w, h
@@ -122,7 +122,6 @@ def get_image_dimensions(url):
 
 
 def get_direct_url(token):
-    """Build the direct download URL for a Nextcloud share token."""
     return f"{NEXTCLOUD_URL}/s/{token}/download"
 
 def is_video(mimetype, filename):
@@ -143,6 +142,15 @@ def is_image(mimetype, filename):
             return True
     return False
 
+def pick_thumbnail():
+    """Pick a random thumbnail and its paired color. Returns (url, color)."""
+    if not EMBED_THUMBNAILS:
+        return "", EMBED_COLOR
+    idx = random.randrange(len(EMBED_THUMBNAILS))
+    url = EMBED_THUMBNAILS[idx]
+    color = EMBED_THUMBNAIL_COLORS[idx] if idx < len(EMBED_THUMBNAIL_COLORS) else EMBED_COLOR
+    return url, color
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
@@ -153,7 +161,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta property="og:url" content="{author_url}">
   <meta property="og:description" content="{description}">
   {og_media}
-  {og_thumbnail}
   <meta name="theme-color" content="{color}">
   <!-- Twitter/X card -->
   <meta name="twitter:card" content="{twitter_card}">
@@ -182,23 +189,27 @@ def embed(token):
     mimetype = info["mimetype"] if info else ""
     filename = info["name"] if info else ""
     direct_url = get_direct_url(token)
-    page_url = request.url
 
-    chosen = html.escape(random.choice(EMBED_TITLES), quote=False).replace("&#x27;", "'") if EMBED_TITLES else ""
-    title = chosen or html.escape(filename or f"Shared file ({token})", quote=False).replace("&#x27;", "'")
-    description = html.escape(filename or token, quote=False).replace("&#x27;", "'")
-    site_name = html.escape(EMBED_SITE_NAME, quote=False).replace("&#x27;", "'")
+    # Title: random pick from EMBED_TITLES if set, otherwise filename
+    chosen = html.escape(random.choice(EMBED_TITLES)).replace("&#x27;", "'") if EMBED_TITLES else ""
+    title = chosen or html.escape(filename or f"Shared file ({token})").replace("&#x27;", "'")
+    description = html.escape(filename or token).replace("&#x27;", "'")
+    site_name = EMBED_SITE_NAME
 
-    og_thumbnail = f'<meta property="og:image" content="{EMBED_THUMBNAIL}">' if EMBED_THUMBNAIL else ""
+    # Pick random thumbnail and its paired color
+    thumbnail_url, color = pick_thumbnail()
 
     if is_video(mimetype, filename):
+        # Use thumbnail as og:image so it fills the embed aspect ratio
+        og_thumbnail = f'<meta property="og:image" content="{thumbnail_url}">' if thumbnail_url else ""
         og_media = f"""
   <meta property="og:type" content="video.other">
   <meta property="og:video:url" content="{direct_url}">
   <meta property="og:video:secure_url" content="{direct_url}">
   <meta property="og:video:type" content="video/mp4">
   <meta property="og:video:width" content="1280">
-  <meta property="og:video:height" content="720">"""
+  <meta property="og:video:height" content="720">
+  {og_thumbnail}"""
         twitter_card = "player"
         body_media = f'<video controls autoplay style="max-width:100%;max-height:100vh" src="{direct_url}"></video>'
 
@@ -207,12 +218,13 @@ def embed(token):
         og_media = f"""
   <meta property="og:type" content="website">
   <meta property="og:image" content="{preview_url}">"""
-        og_thumbnail = ""  # image IS the embed, don't also show thumbnail
         twitter_card = "summary_large_image"
         body_media = f'<img style="max-width:100%;max-height:100vh" src="{direct_url}">'
 
     else:
-        og_media = '<meta property="og:type" content="website">'
+        og_media = f'<meta property="og:type" content="website">'
+        if thumbnail_url:
+            og_media += f'\n  <meta property="og:image" content="{thumbnail_url}">'
         twitter_card = "summary"
         body_media = f'<p style="color:#fff;font-family:sans-serif">Download: <a href="{direct_url}" style="color:#6cf">{filename or token}</a></p>'
 
@@ -221,13 +233,11 @@ def embed(token):
         title=title,
         description=description,
         author_url=EMBED_AUTHOR_URL,
-        color=EMBED_COLOR,
+        color=color,
         og_media=og_media,
-        og_thumbnail=og_thumbnail,
         twitter_card=twitter_card,
         direct_url=direct_url,
         body_media=body_media,
-        page_url=page_url,
     )
     return Response(html_out, mimetype="text/html")
 

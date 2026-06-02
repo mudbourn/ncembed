@@ -142,14 +142,16 @@ def is_image(mimetype, filename):
             return True
     return False
 
-def pick_thumbnail():
-    """Pick a random thumbnail and its paired color. Returns (url, color)."""
-    if not EMBED_THUMBNAILS:
-        return "", EMBED_COLOR
-    idx = random.randrange(len(EMBED_THUMBNAILS))
-    url = EMBED_THUMBNAILS[idx]
+def pick_theme():
+    """Pick a random index and return (title, thumbnail_url, color) together."""
+    count = max(len(EMBED_TITLES), len(EMBED_THUMBNAILS))
+    if count == 0:
+        return "", "", EMBED_COLOR
+    idx = random.randrange(count)
+    title = EMBED_TITLES[idx] if idx < len(EMBED_TITLES) else ""
+    url = EMBED_THUMBNAILS[idx] if idx < len(EMBED_THUMBNAILS) else ""
     color = EMBED_THUMBNAIL_COLORS[idx] if idx < len(EMBED_THUMBNAIL_COLORS) else EMBED_COLOR
-    return url, color
+    return title, url, color
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -190,14 +192,11 @@ def embed(token):
     filename = info["name"] if info else ""
     direct_url = get_direct_url(token)
 
-    # Title: random pick from EMBED_TITLES if set, otherwise filename
-    chosen = html.escape(random.choice(EMBED_TITLES)).replace("&#x27;", "'") if EMBED_TITLES else ""
-    title = chosen or html.escape(filename or f"Shared file ({token})").replace("&#x27;", "'")
+    # Pick random theme (title, thumbnail, color) together
+    chosen, thumbnail_url, color = pick_theme()
+    title = html.escape(chosen).replace("&#x27;", "'") if chosen else html.escape(filename or f"Shared file ({token})").replace("&#x27;", "'")
     description = html.escape(filename or token).replace("&#x27;", "'")
     site_name = EMBED_SITE_NAME
-
-    # Pick random thumbnail and its paired color
-    thumbnail_url, color = pick_thumbnail()
 
     if is_video(mimetype, filename):
         # Use thumbnail as og:image so it fills the embed aspect ratio

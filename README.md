@@ -121,6 +121,8 @@ brew install fswatch ffmpeg
 
 Then install the Dropshare CLI via **Dropshare → Preferences → General → Install CLI**.
 
+Lastly install and activate/purchase your license for Clop Pro **as the app is "Freemium" (They let you use it for like 5 minutes then tell you to pay them)**.
+
 ## Health check
 
 The service exposes a health endpoint at `/health` that returns `ok` with a 200 status.

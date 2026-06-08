@@ -25,6 +25,11 @@ EMBED_AUTHOR_URL  = os.environ.get("EMBED_AUTHOR_URL",  NEXTCLOUD_URL)
 EMBED_AUTHOR_ICON = os.environ.get("EMBED_AUTHOR_ICON", "")
 EMBED_COLOR       = os.environ.get("EMBED_COLOR",       "#C2185B")
 
+# ── Umami analytics (optional) ───────────────────────────────────────────────
+EMBED_UMAMI_SCRIPT_URL = os.environ.get("EMBED_UMAMI_SCRIPT_URL", "")
+EMBED_UMAMI_WEBSITE_ID = os.environ.get("EMBED_UMAMI_WEBSITE_ID", "")
+EMBED_UMAMI_HOST_URL   = os.environ.get("EMBED_UMAMI_HOST_URL", "")
+
 # Pipe-separated thumbnails and their paired hex colors.
 # Example: EMBED_THUMBNAILS=https://example.com/a.jpg|https://example.com/b.jpg
 # Example: EMBED_THUMBNAIL_COLORS=#ff0000|#00ff00
@@ -164,6 +169,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta property="og:description" content="{description}">
   {og_media}
   <meta name="theme-color" content="{color}">
+  {umami_script}
   <!-- Twitter/X card -->
   <meta name="twitter:card" content="{twitter_card}">
   <meta name="twitter:title" content="{title}">
@@ -197,6 +203,12 @@ def embed(token):
     title = html.escape(chosen).replace("&#x27;", "'") if chosen else html.escape(filename or f"Shared file ({token})").replace("&#x27;", "'")
     description = html.escape(filename or token).replace("&#x27;", "'")
     site_name = EMBED_SITE_NAME
+
+    # Umami analytics snippet (optional)
+    if EMBED_UMAMI_SCRIPT_URL and EMBED_UMAMI_WEBSITE_ID and EMBED_UMAMI_HOST_URL:
+        umami_script = f'<!-- Umami analytics -->\n  <script defer src="{EMBED_UMAMI_SCRIPT_URL}" data-website-id="{EMBED_UMAMI_WEBSITE_ID}" data-host-url="{EMBED_UMAMI_HOST_URL}"></script>'
+    else:
+        umami_script = ""
 
     if is_video(mimetype, filename):
         # Use thumbnail as og:image so it fills the embed aspect ratio
@@ -237,6 +249,7 @@ def embed(token):
         twitter_card=twitter_card,
         direct_url=direct_url,
         body_media=body_media,
+        umami_script=umami_script,
     )
     return Response(html_out, mimetype="text/html")
 

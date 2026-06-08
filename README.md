@@ -32,15 +32,21 @@ docker compose up -d --build
 
 ## Environment variables
 
-| Variable            | Required | Description                                                                                                                                                  |
-| ------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `NEXTCLOUD_URL`     | Yes      | Your Nextcloud URL, no trailing slash. e.g. `https://cloud.example.com`                                                                                      |
-| `EMBED_SITE_NAME`   | No       | Site name shown in the embed. Default: `My Nextcloud`                                                                                                        |
-| `EMBED_TITLE`       | No       | Pipe-separated list of titles. one is picked randomly per request. Leave blank to use the filename. e.g. `look mom! no subscription!|shared from the cloud` |
-| `EMBED_AUTHOR_URL`  | No       | URL the site name links to. Defaults to `NEXTCLOUD_URL`                                                                                                      |
-| `EMBED_AUTHOR_ICON` | No       | URL to a small icon shown next to the site name                                                                                                              |
-| `EMBED_THUMBNAIL`   | No       | URL to a thumbnail shown beside the embed (videos only)                                                                                                      |
-| `EMBED_COLOR`       | No       | Hex accent colour for the embed bar. Default: `#C2185B`                                                                                                      |
+| Variable                  | Required | Description                                                                                                                                                   |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXTCLOUD_URL`           | Yes      | Your Nextcloud URL, no trailing slash. e.g. `https://cloud.example.com`                                                                                       |
+| `EMBED_SITE_NAME`         | No       | Site name shown in the embed. Default: `My Nextcloud`                                                                                                         |
+| `EMBED_TITLES`            | No       | Pipe-separated list of titles — one is picked randomly per request, paired with its thumbnail and color. Leave blank to use the filename.                      |
+| `EMBED_THUMBNAILS`        | No       | Pipe-separated list of thumbnail URLs — one is picked per request, paired with its title and color by index.                                                   |
+| `EMBED_THUMBNAIL_COLORS`  | No       | Pipe-separated list of hex colors, one per thumbnail. Falls back to `EMBED_COLOR` if fewer colors than thumbnails.                                            |
+| `EMBED_COLOR`             | No       | Fallback hex accent color for the embed bar. Default: `#C2185B`                                                                                               |
+| `EMBED_AUTHOR_URL`        | No       | URL the site name links to. Defaults to `NEXTCLOUD_URL`                                                                                                       |
+| `EMBED_AUTHOR_ICON`       | No       | URL to a small icon shown next to the site name                                                                                                               |
+| `EMBED_UMAMI_SCRIPT_URL`  | No       | URL to your Umami tracking script. All three Umami vars must be set to enable analytics.                                                                      |
+| `EMBED_UMAMI_WEBSITE_ID`  | No       | Your Umami website ID.                                                                                                                                        |
+| `EMBED_UMAMI_HOST_URL`    | No       | Your Umami host URL.                                                                                                                                          |
+
+Titles, thumbnails, and colors are matched by position — index 0 of each list goes together, index 1 goes together, and so on. Make sure all three lists have the same number of entries.
 
 ## Usage
 
@@ -50,13 +56,23 @@ docker compose up -d --build
 https://save.yournextcloud.com/s/ABC123xyz
 ```
 
-2. To embed it, just swap the subdomain. the token stays the same:
+2. To embed it, swap the subdomain — the token stays the same:
 
 ```
 https://share.yournextcloud.com/s/ABC123xyz
 ```
 
-3. Paste the ncembed URL in your app of choice. It will embed and play inline.
+3. Paste the ncembed URL in Discord, WhatsApp, iMessage, etc. It will embed and play inline.
+
+## Using Nextcloud-hosted images as thumbnails
+
+Nextcloud share URLs serve an HTML page, not a raw image. To use a Nextcloud-hosted image as a thumbnail, use the direct download URL instead:
+
+```
+https://save.yournextcloud.com/s/YOUR_TOKEN/download
+```
+
+This serves the raw file and works exactly like a direct image link.
 
 ## Encoding your videos for Discord
 
@@ -66,23 +82,44 @@ Discord has strict requirements for inline video playback. Videos that don't mee
 
 - **Codec:** H.264 (libx264), Main profile, Level 4.0
 - **Pixel format:** yuv420p
-- **Audio:** AAC, 128kbps
+- **Audio:** AAC
 - **Faststart:** moov atom must be at the beginning of the file
-- **File size:** under 24MB. Discord will not play videos larger than this inline, even if the codec is correct
+- **File size:** under 24MB — Discord will not play videos larger than this inline, even if the codec is correct
 
 ### ffmpeg command
 
 ```bash
-ffmpeg -i /path/to/input.mp4 -c:v libx264 -profile:v main -level 4.0 -pix_fmt yuv420p -movflags faststart -crf 26 -r 30 -c:a aac -b:a 128k /path/to/output.mp4
+ffmpeg -i /path/to/input.mp4 -c:v libx264 -profile:v main -level 4.0 -pix_fmt yuv420p -movflags faststart -crf 22 -r 60 -c:a aac -b:a 160k /path/to/output.mp4
 ```
 
-Adjust `-crf` to trade off quality vs file size. lower is higher quality and larger (18 is near-lossless, 26 is a good balance, 30 is smaller but noticeably compressed). If your output is still over 24MB, increase the crf value or trim the clip.
+Adjust `-crf` to trade off quality vs file size — lower is higher quality and larger (18 is near-lossless, 22 is a good balance, 28 is smaller but noticeably compressed). If your output is still over 24MB, increase the crf value or trim the clip.
 
-If it complains about an unsupported 'chnl' box, run this command first.
+### Fixing the unsupported 'chnl' box error
+
+Some screen recorders (including Dropshare on passthrough and OBS with certain settings) produce files with an Apple-specific audio metadata box that ffmpeg can't parse. Fix it by converting with avconvert first:
 
 ```bash
-avconvert --source /path/to/input.mp4 --output /path/to/ouptut.m4v --preset PresetHEVCHighestQuality
+avconvert --source /path/to/input.mp4 --output /path/to/output.m4v --preset PresetHEVCHighestQuality
 ```
+
+Then run ffmpeg on the `.m4v` output.
+
+### Automated clip workflow (macOS)
+
+For a fully automated clip-to-Discord workflow on macOS using OBS Replay Buffer, [Clop](https://lowtechguys.com/clop/), and Dropshare:
+
+1. Set OBS to record in HEVC and save replays to `~/Movies`
+2. Configure Clop to watch `~/Movies`, optimise new videos, and output to `~/Movies/optimised`
+3. Run the included `clip-watcher.sh` script — it watches `~/Movies/optimised`, remuxes each clip with faststart, encodes anything over 24MB, uploads via the Dropshare CLI, and copies the ncembed share link to your clipboard
+4. A macOS notification fires when the link is ready
+
+Install dependencies first:
+
+```bash
+brew install fswatch ffmpeg
+```
+
+Then install the Dropshare CLI via **Dropshare → Preferences → General → Install CLI**.
 
 ## Health check
 
@@ -94,7 +131,8 @@ You can also point Coolify's health check at `https://your-ncembed-domain.com/he
 
 - Works for videos (mp4, webm, mov etc.) and images (png, jpg, gif etc.).
 - Videos must be H.264-encoded MP4 for Discord to play them inline. Other codecs may show as a download link.
-- The file is streamed directly from your Nextcloud. ncembed only serves the HTML wrapper and never stores any file data.
+- The file is streamed directly from your Nextcloud — ncembed only serves the HTML wrapper and never stores any file data.
 - Shares must be public with no password. Discord's scraper can't authenticate.
 - GIFs are supported as images but Discord will show them as a still frame, not animated. This is a Discord limitation.
 - For large videos, make sure your Nextcloud allows HTTP range requests (it does by default).
+- Analytics tracking via Umami only fires on real browser visits — Discord's scraper doesn't execute JavaScript.

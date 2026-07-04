@@ -27,23 +27,40 @@ embeds the video just like YouTube.
 
 A native macOS menu bar app that watches for new video/image files and uploads them to Nextcloud with share links.
 
-**No external dependencies required** — uses native macOS APIs (FSEvents, URLSession, NSPasteboard).
+**No external dependencies required** — uses native macOS APIs.
 
 #### Quick Start
 
 ```bash
-# Start the watcher (runs in background)
-clip
+# First time setup (creates config file)
+clip setup
 
-# Or start with menu bar app
+# Start the watcher
+clip start
+
+# Or open menu bar app
 clip menu
 ```
+
+#### Setup
+
+Run `clip setup` to create your configuration file. You'll be prompted for:
+
+- **Watch directory** — folder to monitor for new files
+- **Nextcloud URL** — your Nextcloud instance (e.g., `https://cloud.example.com`)
+- **Nextcloud credentials** — username and app password
+- **Upload path** — remote folder in Nextcloud
+- **ncembed domain** — your ncembed proxy domain (optional)
+- **Samba shares** — local network mounts for faster transfers (optional)
+
+Configuration is saved to `~/.config/clip-watcher/config.json` (not in repo).
 
 #### Commands
 
 ```bash
-clip              # Start watching (background)
-clip stop         # Stop the watcher
+clip setup        # First-time configuration
+clip start        # Start watching (background)
+clip stop         # Stop watcher and menu bar app
 clip status       # Show status and recent uploads
 clip last         # Copy last share URL to clipboard
 clip clear        # Clear processed log (re-queue all clips)
@@ -51,58 +68,26 @@ clip log          # Tail the live log
 clip menu         # Open menu bar app
 ```
 
-#### Configuration
-
-Edit `ClipWatcher.swift` to configure:
-
-```swift
-struct Config {
-    // Directories
-    static let watchDir = "~/Movies/Captures/optimised"
-    static let uploadPath = "/Videos/clips"
-    
-    // Nextcloud
-    static let nextcloudURL = "https://save.mudbourn.info"
-    static let ncembedDomain = "share.mudbourn.info"
-    
-    // Samba shares (for faster local network transfers)
-    static let sambaShares = [
-        "/Volumes/UGREENNVME-Share/nextcloud",
-        "/Volumes/ToshibaHD-Share/nextcloud"
-    ]
-    
-    // Link behavior
-    static let useNcembed = true  // false = raw Nextcloud share links
-}
-```
-
-Set Nextcloud credentials via environment variables:
-```bash
-export NC_USER="your-username"
-export NC_PASS="your-app-password"
-```
-
 #### Menu Bar App
 
 The menu bar app shows:
-- **▶ Clip Watcher** — watcher is running
-- **⏹ Clip Watcher** — watcher is stopped
+- **▶ Clip** — watcher is running
+- **⏹ Clip** — watcher is stopped
 
 Features:
 - Start/Stop watcher with one click
-- View status and recent uploads
 - Copy last link to clipboard
 - Tail logs in TextEdit
-- Clear processed log
+- Quit menu bar app
 
 #### How it works
 
-1. **FSEvents** monitors `WATCH_DIR` for new video/image files
+1. **kqueue** monitors watch directory for new video/image files
 2. When a file stabilizes (no size changes for 6s), uploads to Nextcloud:
    - **Samba share** (preferred): Direct local network copy
    - **WebDAV fallback**: Upload via Nextcloud API
 3. Creates a public share link via Nextcloud's OCS API
-4. Converts to ncembed URL (`share.yourdomain.com/embed/TOKEN`)
+4. Converts to ncembed URL or raw Nextcloud share link
 5. Copies to clipboard with notification
 
 #### Supported Formats
@@ -112,11 +97,11 @@ Features:
 
 #### Performance Optimizations
 
-- **Concurrent processing**: Multiple files processed simultaneously
-- **FSEvents**: Native macOS file watching (no polling)
-- **Async/await**: Non-blocking network operations
-- **Memory efficient**: Streams large files instead of loading into memory
-- **Hardware acceleration**: Uses macOS native APIs
+- Serial processing (one file at a time)
+- Debounced file system events (1.5s)
+- kqueue-based file watching (native macOS)
+- Async/await for network operations
+- Actor-based Nextcloud client
 
 ## Notes
 
@@ -126,4 +111,4 @@ Features:
   bot can't authenticate.
 - If your videos are large, make sure your Nextcloud's nginx/Apache allows range requests
   (it does by default).
-- For clip-watcher: use a Nextcloud app password (Settings → Security → App passwords), not your main password.
+- Use a Nextcloud app password (Settings → Security → App passwords), not your main password.

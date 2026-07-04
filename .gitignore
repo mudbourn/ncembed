@@ -21,3 +21,6 @@ pip-delete-this-directory.txt
 .idea/
 *.sublime-project
 *.sublime-workspace
+
+# Clip Watcher config (contains credentials)
+.config/clip-watcher/

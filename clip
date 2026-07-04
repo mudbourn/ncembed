@@ -8,14 +8,25 @@ CLIP_MENU="$SCRIPT_DIR/ClipWatcherMenu.swift"
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-WATCH_DIR="$HOME/Movies/Captures/optimised"
+CONFIG_DIR="$HOME/.config/clip-watcher"
+CONFIG_FILE="$CONFIG_DIR/config.json"
 TEMP_DIR="$HOME/Movies/Captures/encoded"
 PID_FILE="$TEMP_DIR/.clip-watcher.pid"
 LOG_FILE="$TEMP_DIR/clip-watcher.log"
 
 # ── Commands ─────────────────────────────────────────────────────────────────
 
+cmd_setup() {
+    swift "$CLIP_WATCHER" setup
+}
+
 cmd_start() {
+    # Check if config exists
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Error: Configuration not found. Run 'clip setup' first."
+        exit 1
+    fi
+
     # Check if already running
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
@@ -140,6 +151,7 @@ cmd_menu() {
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 case "$1" in
+    setup)  cmd_setup ;;
     start)  cmd_start ;;
     stop)   cmd_stop ;;
     status) cmd_status ;;
@@ -148,5 +160,5 @@ case "$1" in
     log)    cmd_log ;;
     menu)   cmd_menu ;;
     "")     cmd_start ;;
-    *)      echo "Unknown command: $1"; echo "Commands: start | stop | status | last | clear | log | menu"; exit 1 ;;
+    *)      echo "Unknown command: $1"; echo "Commands: setup | start | stop | status | last | clear | log | menu"; exit 1 ;;
 esac

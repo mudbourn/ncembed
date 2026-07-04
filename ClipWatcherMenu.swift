@@ -5,8 +5,28 @@ import Cocoa
 // ── Configuration ───────────────────────────────────────────────────────────
 
 let CLIP_PATH = NSString("~/Documents/GitHub/ncembed/clip").expandingTildeInPath
-let PID_FILE = NSString("~/Movies/Captures/encoded/.clip-watcher.pid").expandingTildeInPath
-let LOG_FILE = NSString("~/Movies/Captures/encoded/clip-watcher.log").expandingTildeInPath
+let CONFIG_DIR = NSString("~/.config/clip-watcher").expandingTildeInPath
+let CONFIG_FILE = "\(CONFIG_DIR)/config.json"
+let TEMP_DIR = NSString("~/Movies/Captures/encoded").expandingTildeInPath
+let PID_FILE = "\(TEMP_DIR)/.clip-watcher.pid"
+let LOG_FILE = "\(TEMP_DIR)/clip-watcher.log"
+
+struct Config: Codable {
+    var watchDir: String
+    var nextcloudURL: String
+    var nextcloudUser: String
+    var nextcloudPass: String
+    var uploadPath: String
+    var ncembedDomain: String
+    var useNcembed: Bool
+    var sambaShares: [String]
+}
+
+func loadConfig() -> Config? {
+    guard FileManager.default.fileExists(atPath: CONFIG_FILE) else { return nil }
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: CONFIG_FILE)) else { return nil }
+    return try? JSONDecoder().decode(Config.self, from: data)
+}
 
 // ── Menu Bar App ────────────────────────────────────────────────────────────
 
@@ -16,7 +36,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusMenuItem: NSMenuItem!
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide dock icon — menu bar only
         NSApp.setActivationPolicy(.accessory)
         
         setupStatusBar()

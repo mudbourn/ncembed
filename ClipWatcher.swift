@@ -316,7 +316,7 @@ class ClipProcessor {
 
             // Try Samba first, but fall back to WebDAV if share creation fails
             var sambaSuccess = false
-            var sambaNextcloudPath: String?  // The path Nextcloud sees
+            var nextcloudFilePath: String?  // Full path in Nextcloud
             
             if let samba = sambaRoot() {
                 Logger.shared.info("Using Samba share: \(samba.mountPath)")
@@ -325,41 +325,41 @@ class ClipProcessor {
                 if (try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)) != nil,
                    (try? FileManager.default.copyItem(atPath: file, toPath: dest)) != nil {
                     sambaSuccess = true
-                    sambaNextcloudPath = "\(samba.nextcloudPath)\(uploadPath)/\(name)"
+                    nextcloudFilePath = "\(samba.nextcloudPath)\(uploadPath)/\(name)"
                     Logger.shared.ok("Copied to Samba: \(dest)")
-                    Logger.shared.info("Nextcloud path: \(sambaNextcloudPath ?? "unknown")")
+                    Logger.shared.info("Nextcloud path: \(nextcloudFilePath ?? "unknown")")
                 } else {
                     Logger.shared.warn("Samba copy failed, falling back to WebDAV")
                 }
             }
 
-            // If Samba copy succeeded, try to create share; if that fails, fall back to WebDAV
-            var token: String?
-            
-            if sambaSuccess, let ncPath = sambaNextcloudPath {
-                token = await nc.createShare(filePath: ncPath)
-                if token != nil {
-                    Logger.shared.ok("Share created via Samba path")
-                } else {
-                    Logger.shared.warn("Share creation failed after Samba copy, falling back to WebDAV")
-                    sambaSuccess = false
-                }
-            }
-            
-            // WebDAV upload if Samba didn't work or share creation failed
-            let webdavPath = "\(uploadPath)/\(name)"
+            // If no Samba or Samba failed, use WebDAV with full Nextcloud path
             if !sambaSuccess {
-                let ok = await nc.upload(file: file, to: uploadPath)
+                // Use the first Samba share's nextcloud path as base, or fallback to uploadPath
+                let basePath = Config.file.sambaShares.first?.nextcloudPath ?? Config.file.uploadPath
+                nextcloudFilePath = "\(basePath)\(uploadPath)/\(name)"
+                
+                let ok = await nc.upload(file: file, to: "\(basePath)\(uploadPath)")
                 guard ok else {
                     Logger.shared.error("Upload failed for \(name)")
                     removeInFlight(file)
                     return
                 }
-                Logger.shared.ok("Uploaded via WebDAV: \(webdavPath)")
-                token = await nc.createShare(filePath: webdavPath)
+                Logger.shared.ok("Uploaded via WebDAV: \(nextcloudFilePath ?? "unknown")")
             }
 
-            guard let finalToken = token else {
+            // Create share link
+            guard let filePath = nextcloudFilePath else {
+                Logger.shared.error("No file path available for share creation")
+                removeInFlight(file)
+                return
+            }
+            
+            guard let token = await nc.createShare(filePath: filePath) else {
+                Logger.shared.error("Failed to create share for \(name)")
+                removeInFlight(file)
+                return
+            }
                 Logger.shared.error("Failed to create share for \(name)")
                 removeInFlight(file)
                 return

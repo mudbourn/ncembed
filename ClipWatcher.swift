@@ -101,6 +101,7 @@ class Logger {
     func ok(_ m: String) { log(" OK  ", m) }
     func warn(_ m: String) { log("WARN ", m) }
     func error(_ m: String) { log("ERROR", m) }
+    func debug(_ m: String) { log("DEBUG", m) }
     func separator() { log("", "──────────────────────────────────────────────────────────") }
 }
 
@@ -145,10 +146,13 @@ actor NextcloudClient {
         let remote = baseURL.appendingPathComponent("dav/files/\(user)\(Config.file.uploadPath)/\(name)")
         let dir = baseURL.appendingPathComponent("dav/files/\(user)\(Config.file.uploadPath)")
 
+        // Create directory if needed
         var mk = URLRequest(url: dir)
         mk.httpMethod = "MKCOL"
         mk.setValue(authValue(), forHTTPHeaderField: "Authorization")
-        _ = try? await session.data(for: mk)
+        let (mkData, mkResp) = (try? await session.data(for: mk)) ?? (Data(), URLResponse())
+        let mkCode = (mkResp as? HTTPURLResponse)?.statusCode ?? 0
+        Logger.shared.debug("MKCOL \(dir): HTTP \(mkCode)")
 
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else {
             Logger.shared.error("Failed to read file for upload: \(file)")
@@ -181,22 +185,33 @@ actor NextcloudClient {
         req.httpMethod = "POST"
         req.setValue(authValue(), forHTTPHeaderField: "Authorization")
         req.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.httpBody = "path=\(filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath)&shareType=3&permissions=1".data(using: .utf8)
 
         do {
-            let (data, _) = try await session.data(for: req)
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let ocs = json?["ocs"] as? [String: Any]
-            let meta = ocs?["meta"] as? [String: Any]
-            let statusCode = meta?["statuscode"] as? Int ?? 0
+            let (data, resp) = try await session.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             
-            if statusCode == 100 {
-                let d = ocs?["data"] as? [String: Any]
-                return d?["token"] as? String
+            // Try JSON parsing
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let ocs = json["ocs"] as? [String: Any],
+               let meta = ocs["meta"] as? [String: Any] {
+                let statusCode = meta["statuscode"] as? Int ?? 0
+                if statusCode == 100 {
+                    let d = ocs["data"] as? [String: Any]
+                    return d?["token"] as? String
+                } else {
+                    let message = meta["message"] as? String ?? "unknown error"
+                    Logger.shared.error("Share creation failed: \(message) (status: \(statusCode))")
+                    Logger.shared.error("Share path: \(filePath)")
+                    return nil
+                }
             } else {
-                let message = meta?["message"] as? String ?? "unknown error"
-                Logger.shared.error("Share creation failed: \(message) (status: \(statusCode))")
+                // Not JSON - probably an error page
+                let body = String(data: data, encoding: .utf8) ?? "empty response"
+                Logger.shared.error("Share creation returned non-JSON (HTTP \(code))")
+                Logger.shared.error("Response: \(body.prefix(200))")
                 Logger.shared.error("Share path: \(filePath)")
                 return nil
             }

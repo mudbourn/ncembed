@@ -23,7 +23,7 @@
 # ── Configuration ────────────────────────────────────────────────────────────
 
 # Folders
-WATCH_DIR="/Users/eli3/Movies/Captures/optimised"
+WATCH_DIR="/Users/eli3/Movies/Captures/Raw"
 TEMP_DIR="/Users/eli3/Movies/Captures/encoded"
 LOG_FILE="$TEMP_DIR/clip-watcher.log"
 PID_FILE="$TEMP_DIR/.clip-watcher.pid"

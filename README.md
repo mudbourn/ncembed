@@ -126,7 +126,8 @@ A macOS menu bar app is included for easy control:
 ```
 
 **Features:**
-- 🎬 = watcher running, ⏸ = watcher stopped
+- ▶ = watcher running, ⏹ = watcher stopped
+- "Clip Watcher" name in menu bar
 - Start/Stop watcher with one click
 - View status, copy last link, tail logs
 - Runs in background (no dock icon)

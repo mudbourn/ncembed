@@ -360,14 +360,10 @@ class ClipProcessor {
                 removeInFlight(file)
                 return
             }
-                Logger.shared.error("Failed to create share for \(name)")
-                removeInFlight(file)
-                return
-            }
 
             let url = Config.file.useNcembed
-                ? "https://\(Config.file.ncembedDomain)/embed/\(finalToken)"
-                : "\(Config.file.nextcloudURL)/s/\(finalToken)"
+                ? "https://\(Config.file.ncembedDomain)/embed/\(token)"
+                : "\(Config.file.nextcloudURL)/s/\(token)"
 
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url, forType: .string)

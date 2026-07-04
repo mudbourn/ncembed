@@ -318,21 +318,30 @@ class ClipProcessor {
             var sambaSuccess = false
             var nextcloudFilePath: String?
             
+            // Try Samba first
             if let samba = sambaRoot() {
                 Logger.shared.info("Using Samba share: \(samba.mountPath)")
                 let dest = "\(samba.mountPath)\(uploadPath)/\(name)"
                 let destDir = "\(samba.mountPath)\(uploadPath)"
                 if (try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)) != nil,
                    (try? FileManager.default.copyItem(atPath: file, toPath: dest)) != nil {
-                    sambaSuccess = true
-                    nextcloudFilePath = "\(samba.nextcloudPath)\(uploadPath)/\(name)"
                     Logger.shared.ok("Copied to Samba: \(dest)")
-                    Logger.shared.info("Nextcloud path: \(nextcloudFilePath ?? "unknown")")
+                    
+                    // Try to create share via Samba path
+                    let ncPath = "\(samba.nextcloudPath)\(uploadPath)/\(name)"
+                    if let token = await nc.createShare(filePath: ncPath) {
+                        sambaSuccess = true
+                        nextcloudFilePath = ncPath
+                        Logger.shared.ok("Share created via Samba path")
+                    } else {
+                        Logger.shared.warn("Share creation failed after Samba copy, falling back to WebDAV")
+                    }
                 } else {
                     Logger.shared.warn("Samba copy failed, falling back to WebDAV")
                 }
             }
 
+            // WebDAV fallback if Samba didn't work
             if !sambaSuccess {
                 let basePath = Config.file.sambaShares.first?.nextcloudPath ?? Config.file.uploadPath
                 nextcloudFilePath = "\(basePath)\(uploadPath)/\(name)"
@@ -352,15 +361,24 @@ class ClipProcessor {
                 return
             }
             
-            guard let token = await nc.createShare(filePath: filePath) else {
+            // Create share if not already created via Samba
+            let token: String?
+            if sambaSuccess {
+                // Token already obtained from Samba path
+                token = await nc.createShare(filePath: filePath)
+            } else {
+                token = await nc.createShare(filePath: filePath)
+            }
+            
+            guard let finalToken = token else {
                 Logger.shared.error("Failed to create share for \(name)")
                 removeInFlight(file)
                 return
             }
 
             let url = Config.file.useNcembed
-                ? "https://\(Config.file.ncembedDomain)/embed/\(token)"
-                : "\(Config.file.nextcloudURL)/s/\(token)"
+                ? "https://\(Config.file.ncembedDomain)/embed/\(finalToken)"
+                : "\(Config.file.nextcloudURL)/s/\(finalToken)"
 
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url, forType: .string)

@@ -5,5 +5,16 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # Point this at your Nextcloud instance
-      - NEXTCLOUD_URL=https://your.nextcloud.example.com
+      - NEXTCLOUD_URL=https://your.nextcloud.example.com # template; must not have trailing "/"
+      - EMBED_SITE_NAME=My Nextcloud
+      - EMBED_TITLE=title1|title2|title3|title4| # template; "|" allows for a collection of different titles that the app can choose for the embed
+      - EMBED_AUTHOR_URL=0
+      - EMBED_AUTHOR_ICON=0
+      - EMBED_THUMBNAIL=0
+      - EMBED_COLOR=#000000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

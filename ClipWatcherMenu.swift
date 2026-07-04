@@ -201,11 +201,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ── Notifications ───────────────────────────────────────────────────────
     
     func showNotification(title: String, message: String) {
-        let notification = NSUserNotification()
-        notification.title = title
-        notification.informativeText = message
-        notification.soundName = NSUserNotificationDefaultSoundName
-        NSUserNotificationCenter.default.deliver(notification)
+        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedMsg = message.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(escapedMsg)\" with title \"\(escapedTitle)\""
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        try? proc.run()
     }
     
     func showAlert(title: String, message: String) {

@@ -117,6 +117,25 @@ clip clear        # Clear processed log (re-queue all clips)
 clip log          # Tail the live log
 ```
 
+#### Menu Bar App (Optional)
+
+A macOS menu bar app is included for easy control:
+
+```bash
+./clip-menu       # Launch the menu bar app
+```
+
+**Features:**
+- 🎬 = watcher running, ⏸ = watcher stopped
+- Start/Stop watcher with one click
+- View status, copy last link, tail logs
+- Runs in background (no dock icon)
+
+**Dependencies:** `rumps` (Python library)
+```bash
+pip3 install rumps
+```
+
 #### How it works
 
 1. `fswatch` monitors `WATCH_DIR` for new video and image files (mp4, mkv, mov, avi, webm, png, jpg, gif, etc.)

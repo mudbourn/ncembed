@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """
 clip-watcher menu bar app
 Provides a macOS menu bar interface for clip-watcher.sh

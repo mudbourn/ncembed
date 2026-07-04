@@ -3,4 +3,4 @@
 # Run this to start the menu bar icon
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-python3 "$SCRIPT_DIR/clip-watcher-menu.py"
+/usr/bin/python3 "$SCRIPT_DIR/clip-watcher-menu.py"

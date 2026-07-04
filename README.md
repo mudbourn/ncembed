@@ -104,7 +104,7 @@ The script checks if these directories exist and uses the first available one. I
 #### Usage
 
 ```bash
-clip              # Start watching
+clip              # Start watching (runs in background)
 clip --debug      # Start with verbose logging
 clip stop         # Stop the watcher
 clip status       # Show watcher status, recent uploads

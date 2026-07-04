@@ -10,7 +10,7 @@
 # Install: brew install fswatch jq
 #
 # COMMANDS:
-#   clip               — start watching the configured folder
+#   clip               — start watching (backgrounded)
 #   clip --debug       — start with verbose logging
 #   clip stop          — gracefully stop the watcher
 #   clip status        — show watcher PID, active jobs, recent clips
@@ -208,6 +208,37 @@ samba_upload() {
 
 # ── Subcommand dispatch ───────────────────────────────────────────────────────
 
+cmd_start() {
+    # Check if already running
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "clip-watcher is already running (PID $PID)"
+            exit 0
+        else
+            rm -f "$PID_FILE"
+        fi
+    fi
+
+    # Background the watcher
+    echo "Starting clip-watcher in background..."
+    nohup "$0" --run >> "$LOG_FILE" 2>&1 &
+    sleep 1
+
+    # Verify it started
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "clip-watcher started (PID $PID)"
+            echo "Use 'clip status' to check, 'clip stop' to stop, 'clip log' to tail logs"
+            exit 0
+        fi
+    fi
+
+    echo "Failed to start clip-watcher. Check logs: $LOG_FILE"
+    exit 1
+}
+
 cmd_stop() {
     if [ ! -f "$PID_FILE" ]; then
         echo "clip-watcher is not running (no PID file found)"
@@ -365,16 +396,21 @@ cmd_log() {
 
 # Dispatch before any startup side-effects
 case "$1" in
+    start)  cmd_start ;;
     stop)   cmd_stop ;;
     status) cmd_status ;;
     last)   cmd_last ;;
     retry)  cmd_retry "$2" ;;
     clear)  cmd_clear ;;
     log)    cmd_log ;;
+    --debug|--run) ;; # Handled below
+    "")     cmd_start ;; # No argument = start
+    *)      echo "Unknown command: $1"; echo "Commands: start | stop | status | last | retry | clear | log"; exit 1 ;;
 esac
 
 DEBUG=false
 [[ "$1" == "--debug" ]] && DEBUG=true
+[[ "$1" == "--run" ]] && shift  # Internal flag for backgrounded process
 
 # ── Startup ──────────────────────────────────────────────────────────────────
 
@@ -396,7 +432,7 @@ else
 fi
 
 log_info "Size limit: ${SIZE_LIMIT_MB}MB"
-log_info "Commands: clip stop | clip status | clip last | clip retry | clip clear | clip log"
+log_info "Commands: clip start | clip stop | clip status | clip last | clip retry | clip clear | clip log"
 log_separator
 
 # Check dependencies

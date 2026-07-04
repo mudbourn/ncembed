@@ -14,9 +14,9 @@ struct Config {
     static let processedLog = "\(tempDir)/.processed"
 
     static let nextcloudURL = "https://save.mudbourn.info"
-    static let nextcloudUser = ProcessInfo.processInfo.environment["NC_USER"] ?? ""
-    static let nextcloudPass = ProcessInfo.processInfo.environment["NC_PASS"] ?? ""
-    static let uploadPath = "/Videos/clips"
+    static let nextcloudUser = "mudbourn"
+    static let nextcloudPass = "CkFgJ-KP9Ge-xnJQP-ErQnS-B9JWd"
+    static let uploadPath = "/ExternalSSD/Watcher/"
 
     static let sambaShares = [
         "/Volumes/UGREENNVME-Share/nextcloud",
@@ -148,6 +148,8 @@ class FileWatcher {
     private var fd: Int32 = -1
     private var source: DispatchSourceFileSystemObject?
     private let callback: () -> Void
+    private var debounceTimer: DispatchSourceTimer?
+    private let debounceQueue = DispatchQueue(label: "com.clip-watcher.debounce")
 
     init(path: String, callback: @escaping () -> Void) {
         self.callback = callback
@@ -161,11 +163,20 @@ class FileWatcher {
             eventMask: [.write, .rename, .attrib],
             queue: DispatchQueue.global(qos: .utility)
         )
-        source?.setEventHandler { [weak self] in self?.callback() }
+        source?.setEventHandler { [weak self] in self?.debouncedCallback() }
         source?.setCancelHandler { [weak self] in
             if let fd = self?.fd, fd >= 0 { close(fd) }
         }
         source?.resume()
+    }
+
+    private func debouncedCallback() {
+        debounceTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: debounceQueue)
+        timer.schedule(deadline: .now() + 1.5)  // 1.5 second debounce
+        timer.setEventHandler { [weak self] in self?.callback() }
+        timer.resume()
+        debounceTimer = timer
     }
 
     deinit { source?.cancel() }
@@ -175,10 +186,12 @@ class FileWatcher {
 
 class ClipProcessor {
     let nextcloud: NextcloudClient?
-    private let queue = DispatchQueue(label: "com.clip-watcher.proc", qos: .userInitiated, attributes: .concurrent)
+    private let queue = DispatchQueue(label: "com.clip-watcher.proc", qos: .userInitiated)  // Serial queue
     private var processed = Set<String>()
     private var inFlight = Set<String>()
     private let lock = NSRecursiveLock()
+    private var scanTimer: DispatchSourceTimer?
+    private let scanQueue = DispatchQueue(label: "com.clip-watcher.scan")
 
     init() { nextcloud = NextcloudClient(); loadProcessed() }
 
@@ -193,6 +206,15 @@ class ClipProcessor {
         guard !processed.contains(file), !inFlight.contains(file) else { return }
         inFlight.insert(file)
         queue.async { self.processFile(file) }
+    }
+
+    func debounceScan(_ scan: @escaping () -> Void) {
+        scanTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: scanQueue)
+        timer.schedule(deadline: .now() + 2.0)  // 2 second debounce
+        timer.setEventHandler { scan() }
+        timer.resume()
+        scanTimer = timer
     }
 
     private func processFile(_ file: String) {

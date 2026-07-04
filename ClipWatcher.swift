@@ -360,6 +360,7 @@ class ClipProcessor {
 class ClipWatcher {
     private var dirWatcher: FileWatcher?
     private let processor: ClipProcessor
+    private var existingFiles: Set<String> = []
 
     init() { processor = ClipProcessor() }
 
@@ -387,8 +388,14 @@ class ClipWatcher {
         try? FileManager.default.createDirectory(atPath: Config.tempDir, withIntermediateDirectories: true)
         try? "\(ProcessInfo.processInfo.processIdentifier)".write(toFile: Config.pidFile, atomically: true, encoding: .utf8)
 
+        // Snapshot existing files so we only process NEW files
+        if let items = try? FileManager.default.contentsOfDirectory(atPath: watchDir) {
+            existingFiles = Set(items)
+            Logger.shared.info("Ignoring \(existingFiles.count) existing files")
+        }
+
         dirWatcher = FileWatcher(path: watchDir) { [weak self] in self?.scan() }
-        Logger.shared.info("File watcher started")
+        Logger.shared.info("File watcher started — ready for new clips")
 
         while true { try? await Task.sleep(nanoseconds: 60_000_000_000) }
     }
@@ -404,6 +411,9 @@ class ClipWatcher {
         let watchDir = NSString(string: Config.file.watchDir).expandingTildeInPath
         guard let items = try? FileManager.default.contentsOfDirectory(atPath: watchDir) else { return }
         for item in items {
+            // Skip files that existed before watcher started
+            guard !existingFiles.contains(item) else { continue }
+            
             let ext = (item as NSString).pathExtension.lowercased()
             guard Config.allExtensions.contains(ext) else { continue }
             guard !item.hasPrefix("encoded_"), !item.hasPrefix("remux_"), !item.contains("_exiftool_tmp") else { continue }

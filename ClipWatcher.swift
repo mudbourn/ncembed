@@ -141,16 +141,16 @@ actor NextcloudClient {
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
 
-    func upload(file: String) async -> Bool {
+    func upload(file: String, to path: String) async -> Bool {
         let name = (file as NSString).lastPathComponent
-        let remote = baseURL.appendingPathComponent("dav/files/\(user)\(Config.file.uploadPath)/\(name)")
-        let dir = baseURL.appendingPathComponent("dav/files/\(user)\(Config.file.uploadPath)")
+        let remote = baseURL.appendingPathComponent("dav/files/\(user)\(path)/\(name)")
+        let dir = baseURL.appendingPathComponent("dav/files/\(user)\(path)")
 
         // Create directory if needed
         var mk = URLRequest(url: dir)
         mk.httpMethod = "MKCOL"
         mk.setValue(authValue(), forHTTPHeaderField: "Authorization")
-        let (mkData, mkResp) = (try? await session.data(for: mk)) ?? (Data(), URLResponse())
+        let (_, mkResp) = (try? await session.data(for: mk)) ?? (Data(), URLResponse())
         let mkCode = (mkResp as? HTTPURLResponse)?.statusCode ?? 0
         Logger.shared.debug("MKCOL \(dir): HTTP \(mkCode)")
 
@@ -309,18 +309,23 @@ class ClipProcessor {
 
             Logger.shared.info("Uploading: \(name) (\(sz / 1024 / 1024)MB)")
 
+            // Determine subfolder based on file type
+            let ext = (name as NSString).pathExtension.lowercased()
+            let subfolder = Config.imageExtensions.contains(ext) ? "Images" : "Videos"
+            let uploadPath = "\(Config.file.uploadPath)/\(subfolder)"
+
             // Try Samba first, but fall back to WebDAV if share creation fails
             var sambaSuccess = false
             var sambaNextcloudPath: String?  // The path Nextcloud sees
             
             if let samba = sambaRoot() {
                 Logger.shared.info("Using Samba share: \(samba.mountPath)")
-                let dest = "\(samba.mountPath)\(Config.file.uploadPath)/\(name)"
-                let destDir = "\(samba.mountPath)\(Config.file.uploadPath)"
+                let dest = "\(samba.mountPath)\(uploadPath)/\(name)"
+                let destDir = "\(samba.mountPath)\(uploadPath)"
                 if (try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)) != nil,
                    (try? FileManager.default.copyItem(atPath: file, toPath: dest)) != nil {
                     sambaSuccess = true
-                    sambaNextcloudPath = "\(samba.nextcloudPath)\(Config.file.uploadPath)/\(name)"
+                    sambaNextcloudPath = "\(samba.nextcloudPath)\(uploadPath)/\(name)"
                     Logger.shared.ok("Copied to Samba: \(dest)")
                     Logger.shared.info("Nextcloud path: \(sambaNextcloudPath ?? "unknown")")
                 } else {
@@ -342,9 +347,9 @@ class ClipProcessor {
             }
             
             // WebDAV upload if Samba didn't work or share creation failed
-            let webdavPath = "\(Config.file.uploadPath)/\(name)"
+            let webdavPath = "\(uploadPath)/\(name)"
             if !sambaSuccess {
-                let ok = await nc.upload(file: file)
+                let ok = await nc.upload(file: file, to: uploadPath)
                 guard ok else {
                     Logger.shared.error("Upload failed for \(name)")
                     removeInFlight(file)

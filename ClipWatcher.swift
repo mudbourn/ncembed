@@ -150,13 +150,29 @@ actor NextcloudClient {
         mk.setValue(authValue(), forHTTPHeaderField: "Authorization")
         _ = try? await session.data(for: mk)
 
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else { return false }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else {
+            Logger.shared.error("Failed to read file for upload: \(file)")
+            return false
+        }
+        
         var req = URLRequest(url: remote)
         req.httpMethod = "PUT"
         req.setValue(authValue(), forHTTPHeaderField: "Authorization")
-        guard let (_, resp) = try? await session.upload(for: req, from: data) else { return false }
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        return code >= 200 && code < 300
+        
+        do {
+            let (_, resp) = try await session.upload(for: req, from: data)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code >= 200 && code < 300 {
+                return true
+            } else {
+                Logger.shared.error("WebDAV upload failed with HTTP \(code)")
+                Logger.shared.error("Upload URL: \(remote)")
+                return false
+            }
+        } catch {
+            Logger.shared.error("WebDAV upload request failed: \(error)")
+            return false
+        }
     }
 
     func createShare(filePath: String) async -> String? {
@@ -168,14 +184,26 @@ actor NextcloudClient {
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.httpBody = "path=\(filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath)&shareType=3&permissions=1".data(using: .utf8)
 
-        guard let (data, _) = try? await session.data(for: req) else { return nil }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let ocs = json["ocs"] as? [String: Any],
-              let meta = ocs["meta"] as? [String: Any],
-              meta["statuscode"] as? Int == 100,
-              let d = ocs["data"] as? [String: Any],
-              let token = d["token"] as? String else { return nil }
-        return token
+        do {
+            let (data, _) = try await session.data(for: req)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let ocs = json?["ocs"] as? [String: Any]
+            let meta = ocs?["meta"] as? [String: Any]
+            let statusCode = meta?["statuscode"] as? Int ?? 0
+            
+            if statusCode == 100 {
+                let d = ocs?["data"] as? [String: Any]
+                return d?["token"] as? String
+            } else {
+                let message = meta?["message"] as? String ?? "unknown error"
+                Logger.shared.error("Share creation failed: \(message) (status: \(statusCode))")
+                Logger.shared.error("Share path: \(filePath)")
+                return nil
+            }
+        } catch {
+            Logger.shared.error("Share creation request failed: \(error)")
+            return nil
+        }
     }
 }
 

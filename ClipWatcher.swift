@@ -267,7 +267,6 @@ class ClipProcessor {
             Logger.shared.info("Uploading: \(name) (\(sz / 1024 / 1024)MB)")
 
             // Try Samba first, but fall back to WebDAV if share creation fails
-            var method = "webdav"
             var sambaSuccess = false
             var sambaNextcloudPath: String?  // The path Nextcloud sees
             
@@ -292,7 +291,7 @@ class ClipProcessor {
             if sambaSuccess, let ncPath = sambaNextcloudPath {
                 token = await nc.createShare(filePath: ncPath)
                 if token != nil {
-                    method = "samba"
+                    Logger.shared.ok("Share created via Samba path")
                 } else {
                     Logger.shared.warn("Share creation failed after Samba copy, falling back to WebDAV")
                     sambaSuccess = false
@@ -397,8 +396,8 @@ class ClipWatcher {
         Logger.shared.info("Nextcloud: \(Config.file.nextcloudURL)")
         Logger.shared.info("ncembed: \(Config.file.ncembedDomain)")
 
-        if let s = Config.file.sambaShares.first(where: { FileManager.default.fileExists(atPath: $0) }) {
-            Logger.shared.ok("Samba share available: \(s)")
+        if let s = Config.file.sambaShares.first(where: { FileManager.default.fileExists(atPath: $0.mountPath) }) {
+            Logger.shared.ok("Samba share available: \(s.mountPath) → \(s.nextcloudPath)")
         } else {
             Logger.shared.warn("No Samba shares mounted")
         }

@@ -198,7 +198,9 @@ actor NextcloudClient {
                let ocs = json["ocs"] as? [String: Any],
                let meta = ocs["meta"] as? [String: Any] {
                 let statusCode = meta["statuscode"] as? Int ?? 0
-                if statusCode == 100 {
+                let status = meta["status"] as? String ?? ""
+                
+                if status == "ok" || statusCode == 100 || statusCode == 200 {
                     let d = ocs["data"] as? [String: Any]
                     return d?["token"] as? String
                 } else {

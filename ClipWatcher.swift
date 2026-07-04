@@ -3,7 +3,7 @@
 import Cocoa
 import Foundation
 
-// MARK: - Configuration (loaded from JSON)
+// MARK: - Configuration
 
 struct ConfigFile: Codable {
     var watchDir: String
@@ -28,8 +28,8 @@ struct ConfigFile: Codable {
 }
 
 struct SambaShare: Codable {
-    var mountPath: String      // Local mount path (e.g., /Volumes/UGREENNVME-Share/nextcloud/Watcher)
-    var nextcloudPath: String  // Nextcloud path (e.g., /ExternalSSD/Watcher)
+    var mountPath: String
+    var nextcloudPath: String
 }
 
 struct Config {
@@ -51,9 +51,7 @@ struct Config {
     
     static func load() -> Bool {
         let url = URL(fileURLWithPath: configFile)
-        guard FileManager.default.fileExists(atPath: configFile) else {
-            return false
-        }
+        guard FileManager.default.fileExists(atPath: configFile) else { return false }
         do {
             let data = try Data(contentsOf: url)
             file = try JSONDecoder().decode(ConfigFile.self, from: data)
@@ -66,7 +64,9 @@ struct Config {
     
     static func save(_ config: ConfigFile) throws {
         try FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
-        let data = try JSONEncoder().encode(config)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(config)
         try data.write(to: URL(fileURLWithPath: configFile))
     }
 }
@@ -77,6 +77,7 @@ class Logger {
     static let shared = Logger()
     private let queue = DispatchQueue(label: "com.clip-watcher.logger", qos: .utility)
     private let df = DateFormatter()
+    var onLog: ((String) -> Void)?
 
     init() { df.dateFormat = "yyyy-MM-dd HH:mm:ss" }
 
@@ -85,6 +86,7 @@ class Logger {
         let line = "[\(ts)] [\(level)] \(msg)"
         queue.async {
             print(line)
+            self.onLog?(line)
             if let data = (line + "\n").data(using: .utf8) {
                 if let fh = FileHandle(forWritingAtPath: Config.logFile) {
                     fh.seekToEndOfFile()
@@ -146,7 +148,6 @@ actor NextcloudClient {
         let remote = baseURL.appendingPathComponent("dav/files/\(user)\(path)/\(name)")
         let dir = baseURL.appendingPathComponent("dav/files/\(user)\(path)")
 
-        // Create directory if needed
         var mk = URLRequest(url: dir)
         mk.httpMethod = "MKCOL"
         mk.setValue(authValue(), forHTTPHeaderField: "Authorization")
@@ -193,7 +194,6 @@ actor NextcloudClient {
             let (data, resp) = try await session.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             
-            // Try JSON parsing
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let ocs = json["ocs"] as? [String: Any],
                let meta = ocs["meta"] as? [String: Any] {
@@ -210,7 +210,6 @@ actor NextcloudClient {
                     return nil
                 }
             } else {
-                // Not JSON - probably an error page
                 let body = String(data: data, encoding: .utf8) ?? "empty response"
                 Logger.shared.error("Share creation returned non-JSON (HTTP \(code))")
                 Logger.shared.error("Response: \(body.prefix(200))")
@@ -224,7 +223,7 @@ actor NextcloudClient {
     }
 }
 
-// MARK: - FileWatcher using kqueue
+// MARK: - FileWatcher
 
 class FileWatcher {
     private var fd: Int32 = -1
@@ -272,6 +271,7 @@ class ClipProcessor {
     private var processed = Set<String>()
     private var inFlight = Set<String>()
     private let lock = NSRecursiveLock()
+    var onStatusChange: (() -> Void)?
 
     init() { nextcloud = NextcloudClient(); loadProcessed() }
 
@@ -311,14 +311,12 @@ class ClipProcessor {
 
             Logger.shared.info("Uploading: \(name) (\(sz / 1024 / 1024)MB)")
 
-            // Determine subfolder based on file type
             let ext = (name as NSString).pathExtension.lowercased()
             let subfolder = Config.imageExtensions.contains(ext) ? "Images" : "Videos"
             let uploadPath = "\(Config.file.uploadPath)/\(subfolder)"
 
-            // Try Samba first, but fall back to WebDAV if share creation fails
             var sambaSuccess = false
-            var nextcloudFilePath: String?  // Full path in Nextcloud
+            var nextcloudFilePath: String?
             
             if let samba = sambaRoot() {
                 Logger.shared.info("Using Samba share: \(samba.mountPath)")
@@ -335,9 +333,7 @@ class ClipProcessor {
                 }
             }
 
-            // If no Samba or Samba failed, use WebDAV with full Nextcloud path
             if !sambaSuccess {
-                // Use the first Samba share's nextcloud path as base, or fallback to uploadPath
                 let basePath = Config.file.sambaShares.first?.nextcloudPath ?? Config.file.uploadPath
                 nextcloudFilePath = "\(basePath)\(uploadPath)/\(name)"
                 
@@ -350,7 +346,6 @@ class ClipProcessor {
                 Logger.shared.ok("Uploaded via WebDAV: \(nextcloudFilePath ?? "unknown")")
             }
 
-            // Create share link
             guard let filePath = nextcloudFilePath else {
                 Logger.shared.error("No file path available for share creation")
                 removeInFlight(file)
@@ -383,6 +378,8 @@ class ClipProcessor {
             appendFile(Config.processedLog, file + "\n")
             Logger.shared.ok("[\(name)] Done")
             Logger.shared.separator()
+            
+            DispatchQueue.main.async { self.onStatusChange?() }
         }
     }
 
@@ -426,68 +423,94 @@ class ClipProcessor {
     }
 }
 
-// MARK: - ClipWatcher
+// MARK: - AppDelegate (Menu Bar + Watcher)
 
-class ClipWatcher {
-    private var dirWatcher: FileWatcher?
-    private let processor: ClipProcessor
-    private var existingFiles: Set<String> = []
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusItem: NSStatusItem!
+    var statusMenuItem: NSMenuItem!
+    var watcher: FileWatcher?
+    var processor: ClipProcessor!
+    var existingFiles: Set<String> = []
+    var isRunning = false
+    var lastLink: String?
 
-    init() { processor = ClipProcessor() }
-
-    func start() async {
-        Logger.shared.separator()
-        Logger.shared.info("clip-watcher starting")
-        Logger.shared.info("Watching: \(Config.file.watchDir)")
-        Logger.shared.info("Nextcloud: \(Config.file.nextcloudURL)")
-        Logger.shared.info("ncembed: \(Config.file.ncembedDomain)")
-
-        if let s = Config.file.sambaShares.first(where: { FileManager.default.fileExists(atPath: $0.mountPath) }) {
-            Logger.shared.ok("Samba share available: \(s.mountPath) → \(s.nextcloudPath)")
-        } else {
-            Logger.shared.warn("No Samba shares mounted")
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        
+        guard Config.load() else {
+            showError("Configuration not found. Run: clip setup")
+            NSApp.terminate(nil)
+            return
         }
-        Logger.shared.separator()
+        
+        processor = ClipProcessor()
+        processor.onStatusChange = { [weak self] in self?.updateStatus() }
+        
+        setupStatusBar()
+        startWatcher()
+    }
 
-        if let nc = processor.nextcloud {
-            Logger.shared.info("Testing Nextcloud connection...")
-            if await nc.testConnection() { Logger.shared.ok("Nextcloud connection OK") }
-            else { Logger.shared.error("Nextcloud connection failed"); return }
+    func setupStatusBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        
+        if let button = statusItem.button {
+            button.title = "⏹ Clip"
         }
+        
+        let menu = NSMenu()
+        
+        statusMenuItem = NSMenuItem(title: "Status: Starting...", action: nil, keyEquivalent: "")
+        statusMenuItem.isEnabled = false
+        menu.addItem(statusMenuItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Copy Last Link", action: #selector(copyLastLink), keyEquivalent: "c"))
+        menu.addItem(NSMenuItem(title: "Tail Log", action: #selector(tailLog), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Restart", action: #selector(restartWatcher), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        
+        statusItem.menu = menu
+    }
 
+    func startWatcher() {
         let watchDir = NSString(string: Config.file.watchDir).expandingTildeInPath
-        try? FileManager.default.createDirectory(atPath: Config.tempDir, withIntermediateDirectories: true)
-        try? "\(ProcessInfo.processInfo.processIdentifier)".write(toFile: Config.pidFile, atomically: true, encoding: .utf8)
-
-        // Snapshot existing files so we only process NEW files
+        
+        // Snapshot existing files
         if let items = try? FileManager.default.contentsOfDirectory(atPath: watchDir) {
             existingFiles = Set(items)
             Logger.shared.info("Ignoring \(existingFiles.count) existing files")
         }
-
-        dirWatcher = FileWatcher(path: watchDir) { [weak self] in self?.scan() }
-        Logger.shared.info("File watcher started — ready for new clips")
-
-        while true { try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        
+        try? FileManager.default.createDirectory(atPath: Config.tempDir, withIntermediateDirectories: true)
+        try? "\(ProcessInfo.processInfo.processIdentifier)".write(toFile: Config.pidFile, atomically: true, encoding: .utf8)
+        
+        // Test connection
+        Task {
+            if let nc = processor.nextcloud {
+                let ok = await nc.testConnection()
+                if ok {
+                    Logger.shared.ok("Nextcloud connection OK")
+                } else {
+                    Logger.shared.error("Nextcloud connection failed")
+                }
+            }
+        }
+        
+        // Start file watcher
+        watcher = FileWatcher(path: watchDir) { [weak self] in self?.scan() }
+        isRunning = true
+        updateStatus()
+        
+        Logger.shared.info("Clip Watcher started — monitoring \(Config.file.watchDir)")
     }
 
-    func stop() {
-        dirWatcher = nil
-        try? FileManager.default.removeItem(atPath: Config.pidFile)
-        Logger.shared.info("clip-watcher stopped")
-        Logger.shared.separator()
-    }
-
-    private func scan() {
+    func scan() {
         let watchDir = NSString(string: Config.file.watchDir).expandingTildeInPath
         guard let items = try? FileManager.default.contentsOfDirectory(atPath: watchDir) else { return }
         for item in items {
-            // Skip files that existed before watcher started
             guard !existingFiles.contains(item) else { continue }
-            
-            // Skip hidden/temp files (macOS creates these during writes)
             guard !item.hasPrefix(".") else { continue }
-            
             let ext = (item as NSString).pathExtension.lowercased()
             guard Config.allExtensions.contains(ext) else { continue }
             guard !item.hasPrefix("encoded_"), !item.hasPrefix("remux_"), !item.contains("_exiftool_tmp") else { continue }
@@ -496,13 +519,79 @@ class ClipWatcher {
             processor.process(file: full)
         }
     }
+
+    func updateStatus() {
+        if let button = statusItem.button {
+            button.title = isRunning ? "▶ Clip" : "⏹ Clip"
+        }
+        
+        let recentUploads = getRecentUploads()
+        if let last = recentUploads.first {
+            statusMenuItem.title = "Last: \(last.1)"
+            lastLink = last.0
+        } else {
+            statusMenuItem.title = isRunning ? "Status: Watching" : "Status: Stopped"
+        }
+    }
+
+    func getRecentUploads() -> [(String, String)] {
+        guard let content = try? String(contentsOfFile: Config.urlLog, encoding: .utf8) else { return [] }
+        let lines = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        return lines.suffix(5).compactMap { line in
+            let parts = line.components(separatedBy: "\t")
+            guard parts.count >= 3 else { return nil }
+            return (parts[1], parts[2])
+        }
+    }
+
+    @objc func copyLastLink() {
+        if let link = lastLink {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link, forType: .string)
+            notify("Link Copied", link)
+        } else {
+            notify("No Links", "No uploads recorded yet")
+        }
+    }
+
+    @objc func tailLog() {
+        if FileManager.default.fileExists(atPath: Config.logFile) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: Config.logFile))
+        }
+    }
+
+    @objc func restartWatcher() {
+        watcher = nil
+        existingFiles = []
+        startWatcher()
+    }
+
+    @objc func quitApp() {
+        try? FileManager.default.removeItem(atPath: Config.pidFile)
+        NSApplication.shared.terminate(nil)
+    }
+
+    func showError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Clip Watcher Error"
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        alert.runModal()
+    }
+
+    func notify(_ title: String, _ message: String) {
+        let t = title.replacingOccurrences(of: "\"", with: "\\\"")
+        let m = message.replacingOccurrences(of: "\"", with: "\\\"")
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", "display notification \"\(m)\" with title \"\(t)\""]
+        try? proc.run()
+    }
 }
 
-// MARK: - Main
+// MARK: - Setup Command
 
-// Check for setup command
-let args = CommandLine.arguments
-if args.count > 1 && args[1] == "setup" {
+func runSetup() {
     print("Setting up clip-watcher configuration...")
     print("")
     
@@ -520,16 +609,13 @@ if args.count > 1 && args[1] == "setup" {
     print("Nextcloud password: ", terminator: "")
     if let input = readLine() { config.nextcloudPass = input }
     
-    print("Upload path [\(config.uploadPath)]: ", terminator: "")
-    if let input = readLine(), !input.isEmpty { config.uploadPath = input }
-    
     print("ncembed domain [\(config.ncembedDomain)]: ", terminator: "")
     if let input = readLine(), !input.isEmpty { config.ncembedDomain = input }
     
     print("Use ncembed links? (y/n) [y]: ", terminator: "")
     if let input = readLine() { config.useNcembed = input.lowercased() != "n" }
     
-    print("Samba shares (comma-separated mount:path pairs, or empty) []: ", terminator: "")
+    print("Samba shares (mount:path pairs, comma-separated, or empty) []: ", terminator: "")
     if let input = readLine(), !input.isEmpty {
         config.sambaShares = input.components(separatedBy: ",").compactMap { pair in
             let parts = pair.trimmingCharacters(in: .whitespaces).components(separatedBy: ":")
@@ -543,7 +629,7 @@ if args.count > 1 && args[1] == "setup" {
         try Config.save(config)
         print("")
         print("Configuration saved to: \(Config.configFile)")
-        print("Run 'clip start' to begin watching")
+        print("Run 'clip' to start watching")
     } catch {
         print("Error saving config: \(error)")
         exit(1)
@@ -551,19 +637,23 @@ if args.count > 1 && args[1] == "setup" {
     exit(0)
 }
 
-// Load config
-guard Config.load() else {
-    print("Error: Configuration not found. Run 'clip setup' first.")
+// MARK: - Main
+
+let args = CommandLine.arguments
+if args.count > 1 && args[1] == "setup" {
+    runSetup()
+}
+
+// Check for existing instance
+if let pidStr = try? String(contentsOfFile: Config.pidFile, encoding: .utf8),
+   let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)),
+   kill(pid, 0) == 0 {
+    print("Clip Watcher is already running (PID \(pid))")
+    print("Use 'clip stop' to stop it first")
     exit(1)
 }
 
-let watcher = ClipWatcher()
-
-signal(SIGINT) { _ in watcher.stop(); exit(0) }
-signal(SIGTERM) { _ in watcher.stop(); exit(0) }
-
-Task {
-    await watcher.start()
-}
-
-RunLoop.main.run()
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()

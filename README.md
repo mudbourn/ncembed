@@ -23,92 +23,96 @@ embeds the video just like YouTube.
 3. If you want it on a real domain (recommended so Discord trusts it), put it behind your reverse proxy
    (nginx/Caddy/Traefik) on a subdomain like `embed.yournextcloud.com`.
 
-### Clip Watcher (Native Swift)
+### Clip Watcher
 
-A native macOS menu bar app that watches for new video/image files and uploads them to Nextcloud with share links.
+A unified macOS menu bar app and file watcher. Monitors a folder for new video/image files, uploads them to Nextcloud, and creates share links.
 
-**No external dependencies required** — uses native macOS APIs.
+**No external dependencies** — native macOS Swift app.
 
 #### Quick Start
 
 ```bash
-# First time setup (creates config file)
+# First time setup
 clip setup
 
-# Start the watcher
+# Start (menu bar + watcher)
+clip
+
+# Or explicitly
 clip start
-
-# Or open menu bar app
-clip menu
 ```
-
-#### Setup
-
-Run `clip setup` to create your configuration file. You'll be prompted for:
-
-- **Watch directory** — folder to monitor for new files
-- **Nextcloud URL** — your Nextcloud instance (e.g., `https://cloud.example.com`)
-- **Nextcloud credentials** — username and app password
-- **Upload path** — remote folder in Nextcloud
-- **ncembed domain** — your ncembed proxy domain (optional)
-- **Samba shares** — local network mounts for faster transfers (optional)
-
-Configuration is saved to `~/.config/clip-watcher/config.json` (not in repo).
 
 #### Commands
 
 ```bash
 clip setup        # First-time configuration
-clip start        # Start watching (background)
-clip stop         # Stop watcher and menu bar app
+clip start        # Start menu bar app + watcher
+clip stop         # Stop everything
 clip status       # Show status and recent uploads
 clip last         # Copy last share URL to clipboard
-clip clear        # Clear processed log (re-queue all clips)
+clip clear        # Clear processed log
 clip log          # Tail the live log
-clip menu         # Open menu bar app
 ```
 
-#### Menu Bar App
+#### Menu Bar
 
-The menu bar app shows:
+The app runs in your menu bar:
 - **▶ Clip** — watcher is running
 - **⏹ Clip** — watcher is stopped
 
-Features:
-- Start/Stop watcher with one click
-- Copy last link to clipboard
-- Tail logs in TextEdit
-- Quit menu bar app
+Click to see menu:
+- Copy Last Link
+- Tail Log
+- Restart
+- Quit
 
-#### How it works
+#### Features
 
-1. **kqueue** monitors watch directory for new video/image files
-2. When a file stabilizes (no size changes for 6s), uploads to Nextcloud:
-   - **Samba share** (preferred): Direct local network copy
-   - **WebDAV fallback**: Upload via Nextcloud API
-3. Creates a public share link via Nextcloud's OCS API
-4. Converts to ncembed URL or raw Nextcloud share link
-5. Copies to clipboard with notification
+- **Unified service** — menu bar app + file watcher in one process
+- **Auto-sort** — videos and images saved to separate folders
+- **Samba support** — fast local network copies when available
+- **ncembed links** — generates embeddable share links for Discord
+- **Debounced scanning** — efficient file system monitoring
+- **Skip existing** — only processes files added after launch
+- **Skip temp files** — ignores hidden/temporary files
+
+#### Configuration
+
+Run `clip setup` or edit `~/.config/clip-watcher/config.json`:
+
+```json
+{
+  "watchDir": "~/Movies/Captures",
+  "nextcloudURL": "https://cloud.example.com",
+  "nextcloudUser": "username",
+  "nextcloudPass": "app-password",
+  "uploadPath": "",
+  "ncembedDomain": "embed.example.com",
+  "useNcembed": true,
+  "sambaShares": [
+    {
+      "mountPath": "/Volumes/Share/nextcloud",
+      "nextcloudPath": "/ExternalStorage"
+    }
+  ]
+}
+```
+
+#### Samba Shares
+
+Format: `mountPath:nextcloudPath`
+- `mountPath` — local mount path
+- `nextcloudPath` — path as seen in Nextcloud
+
+Example: `/Volumes/SSD/nextcloud:/ExternalSSD`
 
 #### Supported Formats
 
 **Videos:** mp4, mkv, mov, avi, webm
 **Images:** png, jpg, jpeg, gif, webp, bmp, tiff
 
-#### Performance Optimizations
-
-- Serial processing (one file at a time)
-- Debounced file system events (1.5s)
-- kqueue-based file watching (native macOS)
-- Async/await for network operations
-- Actor-based Nextcloud client
-
 ## Notes
 
-- Works for videos (mp4, webm, mov, etc.) and images.
-- The video is streamed directly from your Nextcloud — ncembed just serves the HTML wrapper.
-- Your Nextcloud share must be public (no password) for this to work, since Discord's
-  bot can't authenticate.
-- If your videos are large, make sure your Nextcloud's nginx/Apache allows range requests
-  (it does by default).
-- Use a Nextcloud app password (Settings → Security → App passwords), not your main password.
+- Your Nextcloud share must be public (no password) for Discord embedding
+- Use a Nextcloud app password (Settings → Security → App passwords)
+- Config is stored at `~/.config/clip-watcher/config.json` (not in repo)

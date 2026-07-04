@@ -6,7 +6,7 @@ import Foundation
 // MARK: - Configuration
 
 struct Config {
-    static let watchDir = NSString("~/Movies/Captures/Raw").expandingTildeInPath
+    static let watchDir = NSString("~/Movies/Captures/optimised").expandingTildeInPath
     static let tempDir = NSString("~/Movies/Captures/encoded").expandingTildeInPath
     static let logFile = "\(tempDir)/clip-watcher.log"
     static let pidFile = "\(tempDir)/.clip-watcher.pid"

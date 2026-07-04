@@ -129,7 +129,9 @@ cmd_log() {
 }
 
 cmd_menu() {
-    swift "$CLIP_MENU"
+    # Launch menu bar app in background (doesn't block terminal)
+    nohup swift "$CLIP_MENU" > /dev/null 2>&1 &
+    echo "Clip Watcher menu bar app started"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────

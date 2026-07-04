@@ -4,7 +4,7 @@ import Cocoa
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
-let SCRIPT_PATH = NSString("~/scripts/clip-watcher.sh").expandingTildeInPath
+let CLIP_PATH = NSString("~/Documents/GitHub/ncembed/clip").expandingTildeInPath
 let PID_FILE = NSString("~/Movies/Captures/encoded/.clip-watcher.pid").expandingTildeInPath
 let LOG_FILE = NSString("~/Movies/Captures/encoded/clip-watcher.log").expandingTildeInPath
 
@@ -13,13 +13,16 @@ let LOG_FILE = NSString("~/Movies/Captures/encoded/clip-watcher.log").expandingT
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
+    var statusMenuItem: NSMenuItem!
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hide dock icon — menu bar only
+        NSApp.setActivationPolicy(.accessory)
+        
         setupStatusBar()
         updateStatus()
         
-        // Update status every 5 seconds
-        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
             self.updateStatus()
         }
     }
@@ -28,131 +31,76 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem.button {
-            button.title = "Clip Watcher"
-            button.action = #selector(statusBarButtonClicked(_:))
+            button.title = "⏹ Clip"
         }
         
-        setupMenu()
-    }
-    
-    func setupMenu() {
         let menu = NSMenu()
         
-        // Status header
-        let statusItem = NSMenuItem(title: "Status: Checking...", action: nil, keyEquivalent: "")
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
+        statusMenuItem = NSMenuItem(title: "Status: Checking...", action: nil, keyEquivalent: "")
+        statusMenuItem.isEnabled = false
+        menu.addItem(statusMenuItem)
         
         menu.addItem(NSMenuItem.separator())
-        
-        // Actions
         menu.addItem(NSMenuItem(title: "Start", action: #selector(startWatcher), keyEquivalent: "s"))
         menu.addItem(NSMenuItem(title: "Stop", action: #selector(stopWatcher), keyEquivalent: "x"))
-        
         menu.addItem(NSMenuItem.separator())
-        
-        menu.addItem(NSMenuItem(title: "Status", action: #selector(showStatus), keyEquivalent: "i"))
         menu.addItem(NSMenuItem(title: "Copy Last Link", action: #selector(copyLastLink), keyEquivalent: "c"))
         menu.addItem(NSMenuItem(title: "Tail Log", action: #selector(tailLog), keyEquivalent: "l"))
-        
         menu.addItem(NSMenuItem.separator())
-        
-        menu.addItem(NSMenuItem(title: "Clear Processed", action: #selector(clearProcessed), keyEquivalent: ""))
-        
-        menu.addItem(NSMenuItem.separator())
-        
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
         
         statusItem.menu = menu
     }
     
-    @objc func statusBarButtonClicked(_ sender: NSStatusBarButton) {
-        // Menu will show automatically
-    }
-    
-    // ── Status Updates ──────────────────────────────────────────────────────
-    
     func updateStatus() {
-        let isRunning = checkIfRunning()
+        let running = isWatcherRunning()
         
         if let button = statusItem.button {
-            button.title = isRunning ? "▶ Clip Watcher" : "⏹ Clip Watcher"
+            button.title = running ? "▶ Clip" : "⏹ Clip"
         }
-        
-        // Update status menu item
-        if let menu = statusItem.menu, let statusItem = menu.items.first {
-            statusItem.title = isRunning ? "Status: Running" : "Status: Stopped"
-        }
+        statusMenuItem.title = running ? "Status: Running" : "Status: Stopped"
     }
     
-    func checkIfRunning() -> Bool {
-        guard let pidString = try? String(contentsOfFile: PID_FILE, encoding: .utf8) else {
+    func isWatcherRunning() -> Bool {
+        guard let pidStr = try? String(contentsOfFile: PID_FILE, encoding: .utf8),
+              let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return false
         }
-        
-        let pid = pidString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let pidInt = Int32(pid) else {
-            return false
-        }
-        
-        // Check if process is running
-        return kill(pidInt, 0) == 0
+        return kill(pid, 0) == 0
     }
     
     // ── Actions ─────────────────────────────────────────────────────────────
     
     @objc func startWatcher() {
-        runScript(args: [])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.updateStatus()
-        }
+        runClip("start")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.updateStatus() }
     }
     
     @objc func stopWatcher() {
-        runScript(args: ["stop"])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.updateStatus()
-        }
-    }
-    
-    @objc func showStatus() {
-        let output = runScriptWithOutput(args: ["status"])
-        showAlert(title: "Clip Watcher Status", message: output)
+        runClip("stop")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.updateStatus() }
     }
     
     @objc func copyLastLink() {
-        let output = runScriptWithOutput(args: ["last"])
+        let output = runClipWithOutput("last")
         if output.contains("Copied:") {
-            // Extract URL from output
-            let components = output.components(separatedBy: "Copied: ")
-            if components.count > 1 {
-                let urlPart = components[1].components(separatedBy: "  ").first ?? ""
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(urlPart, forType: .string)
-                showNotification(title: "Link Copied", message: urlPart)
+            let parts = output.components(separatedBy: "Copied: ")
+            if parts.count > 1 {
+                let url = parts[1].components(separatedBy: "  ").first ?? ""
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+                notify("Link Copied", url)
             }
         } else {
-            showNotification(title: "No Links", message: output)
+            notify("No Links", output.isEmpty ? "No uploads recorded yet" : output)
         }
     }
     
     @objc func tailLog() {
-        let url = URL(fileURLWithPath: LOG_FILE)
-        NSWorkspace.shared.open(url)
-    }
-    
-    @objc func clearProcessed() {
-        let alert = NSAlert()
-        alert.messageText = "Clear Processed Log"
-        alert.informativeText = "This will allow all clips to be re-queued. Continue?"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Clear")
-        alert.addButton(withTitle: "Cancel")
-        
-        if alert.runModal() == .alertFirstButtonReturn {
-            runScript(args: ["clear"])
-            showNotification(title: "Cleared", message: "Processed log cleared")
+        if FileManager.default.fileExists(atPath: LOG_FILE) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: LOG_FILE))
+        } else {
+            notify("No Log", "Log file not found")
         }
     }
     
@@ -160,61 +108,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.terminate(nil)
     }
     
-    // ── Script Execution ────────────────────────────────────────────────────
+    // ── Helpers ─────────────────────────────────────────────────────────────
     
     @discardableResult
-    func runScript(args: [String]) -> Int32 {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: SCRIPT_PATH)
-        task.arguments = args
-        
-        do {
-            try task.run()
-            task.waitUntilExit()
-            return task.terminationStatus
-        } catch {
-            print("Error running script: \(error)")
-            return -1
-        }
+    func runClip(_ args: String...) -> Int32 {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-l", "-c", "\(CLIP_PATH) \(args.joined(separator: " "))"]
+        try? proc.run()
+        proc.waitUntilExit()
+        return proc.terminationStatus
     }
     
-    func runScriptWithOutput(args: [String]) -> String {
-        let task = Process()
+    func runClipWithOutput(_ args: String...) -> String {
+        let proc = Process()
         let pipe = Pipe()
-        
-        task.executableURL = URL(fileURLWithPath: SCRIPT_PATH)
-        task.arguments = args
-        task.standardOutput = pipe
-        task.standardError = pipe
-        
-        do {
-            try task.run()
-            task.waitUntilExit()
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8) ?? "No output"
-        } catch {
-            return "Error: \(error)"
-        }
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-l", "-c", "\(CLIP_PATH) \(args.joined(separator: " "))"]
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        try? proc.run()
+        proc.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
     
-    // ── Notifications ───────────────────────────────────────────────────────
-    
-    func showNotification(title: String, message: String) {
-        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedMsg = message.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "display notification \"\(escapedMsg)\" with title \"\(escapedTitle)\""
+    func notify(_ title: String, _ message: String) {
+        let t = title.replacingOccurrences(of: "\"", with: "\\\"")
+        let m = message.replacingOccurrences(of: "\"", with: "\\\"")
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", script]
+        proc.arguments = ["-e", "display notification \"\(m)\" with title \"\(t)\""]
         try? proc.run()
-    }
-    
-    func showAlert(title: String, message: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.runModal()
     }
 }
 

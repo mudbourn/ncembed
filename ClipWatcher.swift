@@ -261,22 +261,38 @@ class ClipProcessor {
 
             Logger.shared.info("Uploading: \(name) (\(sz / 1024 / 1024)MB)")
 
-            // Try Samba first
+            // Try Samba first, but fall back to WebDAV if share creation fails
             var method = "webdav"
+            var sambaSuccess = false
+            
             if let samba = sambaRoot() {
                 Logger.shared.info("Using Samba share: \(samba)")
                 let dest = "\(samba)\(Config.file.uploadPath)/\(name)"
                 let destDir = "\(samba)\(Config.file.uploadPath)"
                 if (try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)) != nil,
                    (try? FileManager.default.copyItem(atPath: file, toPath: dest)) != nil {
-                    method = "samba"
+                    sambaSuccess = true
                     Logger.shared.ok("Copied to Samba: \(dest)")
                 } else {
                     Logger.shared.warn("Samba copy failed, falling back to WebDAV")
                 }
             }
 
-            if method == "webdav" {
+            // If Samba copy succeeded, try to create share; if that fails, fall back to WebDAV
+            var token: String?
+            
+            if sambaSuccess {
+                token = await nc.createShare(filePath: "\(Config.file.uploadPath)/\(name)")
+                if token != nil {
+                    method = "samba"
+                } else {
+                    Logger.shared.warn("Share creation failed after Samba copy, falling back to WebDAV")
+                    sambaSuccess = false
+                }
+            }
+            
+            // WebDAV upload if Samba didn't work or share creation failed
+            if !sambaSuccess {
                 let ok = await nc.upload(file: file)
                 guard ok else {
                     Logger.shared.error("Upload failed for \(name)")
@@ -284,17 +300,18 @@ class ClipProcessor {
                     return
                 }
                 Logger.shared.ok("Uploaded via WebDAV: \(Config.file.uploadPath)/\(name)")
+                token = await nc.createShare(filePath: "\(Config.file.uploadPath)/\(name)")
             }
 
-            guard let token = await nc.createShare(filePath: "\(Config.file.uploadPath)/\(name)") else {
+            guard let finalToken = token else {
                 Logger.shared.error("Failed to create share for \(name)")
                 removeInFlight(file)
                 return
             }
 
             let url = Config.file.useNcembed
-                ? "https://\(Config.file.ncembedDomain)/embed/\(token)"
-                : "\(Config.file.nextcloudURL)/s/\(token)"
+                ? "https://\(Config.file.ncembedDomain)/embed/\(finalToken)"
+                : "\(Config.file.nextcloudURL)/s/\(finalToken)"
 
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url, forType: .string)

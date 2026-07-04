@@ -13,9 +13,16 @@ from pathlib import Path
 # Path to clip-watcher.sh
 SCRIPT_PATH = Path.home() / "scripts" / "clip-watcher.sh"
 
+# Menu bar appearance
+APP_NAME = "Clip Watcher"
+ICON_RUNNING = "▶"      # Play symbol when running
+ICON_STOPPED = "⏹"      # Stop symbol when stopped  
+ICON_UNKNOWN = "?"       # Unknown state
+ICON_STARTING = "..."    # Starting up
+
 class ClipWatcherApp(rumps.App):
     def __init__(self):
-        super().__init__("⏳", quit_button=None)
+        super().__init__(APP_NAME, quit_button=None)
         self.script_path = str(SCRIPT_PATH)
         self.update_status()
         
@@ -71,11 +78,11 @@ class ClipWatcherApp(rumps.App):
                     timeout=5
                 )
                 if result.returncode == 0:
-                    self.title = "🎬"
+                    self.title = ICON_RUNNING
                     return
-            self.title = "⏸"
+            self.title = ICON_STOPPED
         except Exception:
-            self.title = "❓"
+            self.title = ICON_UNKNOWN
     
     @rumps.clicked("Start")
     def start(self, _):

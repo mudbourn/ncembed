@@ -13,7 +13,7 @@ struct ConfigFile: Codable {
     var uploadPath: String
     var ncembedDomain: String
     var useNcembed: Bool
-    var sambaShares: [String]
+    var sambaShares: [SambaShare]
     
     static let `default` = ConfigFile(
         watchDir: "~/Movies/Captures",
@@ -25,6 +25,11 @@ struct ConfigFile: Codable {
         useNcembed: true,
         sambaShares: []
     )
+}
+
+struct SambaShare: Codable {
+    var mountPath: String      // Local mount path (e.g., /Volumes/UGREENNVME-Share/nextcloud/Watcher)
+    var nextcloudPath: String  // Nextcloud path (e.g., /ExternalSSD/Watcher)
 }
 
 struct Config {
@@ -264,15 +269,18 @@ class ClipProcessor {
             // Try Samba first, but fall back to WebDAV if share creation fails
             var method = "webdav"
             var sambaSuccess = false
+            var sambaNextcloudPath: String?  // The path Nextcloud sees
             
             if let samba = sambaRoot() {
-                Logger.shared.info("Using Samba share: \(samba)")
-                let dest = "\(samba)\(Config.file.uploadPath)/\(name)"
-                let destDir = "\(samba)\(Config.file.uploadPath)"
+                Logger.shared.info("Using Samba share: \(samba.mountPath)")
+                let dest = "\(samba.mountPath)\(Config.file.uploadPath)/\(name)"
+                let destDir = "\(samba.mountPath)\(Config.file.uploadPath)"
                 if (try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)) != nil,
                    (try? FileManager.default.copyItem(atPath: file, toPath: dest)) != nil {
                     sambaSuccess = true
+                    sambaNextcloudPath = "\(samba.nextcloudPath)\(Config.file.uploadPath)/\(name)"
                     Logger.shared.ok("Copied to Samba: \(dest)")
+                    Logger.shared.info("Nextcloud path: \(sambaNextcloudPath ?? "unknown")")
                 } else {
                     Logger.shared.warn("Samba copy failed, falling back to WebDAV")
                 }
@@ -281,8 +289,8 @@ class ClipProcessor {
             // If Samba copy succeeded, try to create share; if that fails, fall back to WebDAV
             var token: String?
             
-            if sambaSuccess {
-                token = await nc.createShare(filePath: "\(Config.file.uploadPath)/\(name)")
+            if sambaSuccess, let ncPath = sambaNextcloudPath {
+                token = await nc.createShare(filePath: ncPath)
                 if token != nil {
                     method = "samba"
                 } else {
@@ -292,6 +300,7 @@ class ClipProcessor {
             }
             
             // WebDAV upload if Samba didn't work or share creation failed
+            let webdavPath = "\(Config.file.uploadPath)/\(name)"
             if !sambaSuccess {
                 let ok = await nc.upload(file: file)
                 guard ok else {
@@ -299,8 +308,8 @@ class ClipProcessor {
                     removeInFlight(file)
                     return
                 }
-                Logger.shared.ok("Uploaded via WebDAV: \(Config.file.uploadPath)/\(name)")
-                token = await nc.createShare(filePath: "\(Config.file.uploadPath)/\(name)")
+                Logger.shared.ok("Uploaded via WebDAV: \(webdavPath)")
+                token = await nc.createShare(filePath: webdavPath)
             }
 
             guard let finalToken = token else {
@@ -348,8 +357,8 @@ class ClipProcessor {
         (try? FileManager.default.attributesOfItem(atPath: f)[.size] as? Int) ?? 0
     }
 
-    private func sambaRoot() -> String? {
-        Config.file.sambaShares.first { FileManager.default.fileExists(atPath: $0) }
+    private func sambaRoot() -> SambaShare? {
+        Config.file.sambaShares.first { FileManager.default.fileExists(atPath: $0.mountPath) }
     }
 
     private func removeInFlight(_ f: String) {
@@ -472,9 +481,14 @@ if args.count > 1 && args[1] == "setup" {
     print("Use ncembed links? (y/n) [y]: ", terminator: "")
     if let input = readLine() { config.useNcembed = input.lowercased() != "n" }
     
-    print("Samba shares (comma-separated, or empty) []: ", terminator: "")
+    print("Samba shares (comma-separated mount:path pairs, or empty) []: ", terminator: "")
     if let input = readLine(), !input.isEmpty {
-        config.sambaShares = input.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        config.sambaShares = input.components(separatedBy: ",").compactMap { pair in
+            let parts = pair.trimmingCharacters(in: .whitespaces).components(separatedBy: ":")
+            guard parts.count == 2 else { return nil }
+            return SambaShare(mountPath: parts[0].trimmingCharacters(in: .whitespaces),
+                            nextcloudPath: parts[1].trimmingCharacters(in: .whitespaces))
+        }
     }
     
     do {

@@ -2,46 +2,35 @@
 
 import Cocoa
 import Foundation
-import System
+import UserNotifications
 
 // MARK: - Configuration
 
 struct Config {
-    // Directories
     static let watchDir = NSString("~/Movies/Captures/optimised").expandingTildeInPath
     static let tempDir = NSString("~/Movies/Captures/encoded").expandingTildeInPath
     static let logFile = "\(tempDir)/clip-watcher.log"
     static let pidFile = "\(tempDir)/.clip-watcher.pid"
     static let urlLog = "\(tempDir)/.urls"
     static let processedLog = "\(tempDir)/.processed"
-    
-    // Nextcloud
+
     static let nextcloudURL = "https://save.mudbourn.info"
-    static let nextcloudUser = "" // Set via NC_USER env var
-    static let nextcloudPass = "" // Set via NC_PASS env var
+    static let nextcloudUser = ProcessInfo.processInfo.environment["NC_USER"] ?? ""
+    static let nextcloudPass = ProcessInfo.processInfo.environment["NC_PASS"] ?? ""
     static let uploadPath = "/Videos/clips"
-    
-    // Samba shares
+
     static let sambaShares = [
         "/Volumes/UGREENNVME-Share/nextcloud",
         "/Volumes/ToshibaHD-Share/nextcloud"
     ]
-    
-    // ncembed
+
     static let ncembedDomain = "share.mudbourn.info"
-    
-    // Processing
-    static let sizeLimitMB = 24
-    static let sizeLimit = sizeLimitMB * 1024 * 1024
+    static let sizeLimit = 24 * 1024 * 1024
     static let stableChecks = 3
     static let stableInterval: TimeInterval = 2.0
-    
-    // File extensions
     static let videoExtensions: Set<String> = ["mp4", "mkv", "mov", "avi", "webm"]
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"]
     static let allExtensions: Set<String> = videoExtensions.union(imageExtensions)
-    
-    // Link behavior
     static let useNcembed = true
 }
 
@@ -49,566 +38,336 @@ struct Config {
 
 class Logger {
     static let shared = Logger()
-    private let logQueue = DispatchQueue(label: "com.clip-watcher.logger", qos: .utility)
-    private let dateFormatter: DateFormatter
-    
-    init() {
-        dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-    }
-    
-    func log(_ level: String, _ message: String) {
-        let timestamp = dateFormatter.string(from: Date())
-        let logMessage = "[\(timestamp)] [\(level)] \(message)"
-        
-        logQueue.async {
-            print(logMessage)
-            self.appendToLogFile(logMessage)
-        }
-    }
-    
-    func info(_ message: String) { log("INFO ", message) }
-    func ok(_ message: String) { log(" OK  ", message) }
-    func warn(_ message: String) { log("WARN ", message) }
-    func error(_ message: String) { log("ERROR", message) }
-    func debug(_ message: String) { log("DEBUG", message) }
-    
-    func separator() {
-        log("", "──────────────────────────────────────────────────────────")
-    }
-    
-    private func appendToLogFile(_ message: String) {
-        guard let data = (message + "\n").data(using: .utf8) else { return }
-        
-        if FileManager.default.fileExists(atPath: Config.logFile) {
-            if let fileHandle = FileHandle(forWritingAtPath: Config.logFile) {
-                fileHandle.seekToEndOfFile()
-                fileHandle.write(data)
-                fileHandle.closeFile()
+    private let queue = DispatchQueue(label: "com.clip-watcher.logger", qos: .utility)
+    private let df = DateFormatter()
+
+    init() { df.dateFormat = "yyyy-MM-dd HH:mm:ss" }
+
+    func log(_ level: String, _ msg: String) {
+        let ts = df.string(from: Date())
+        let line = "[\(ts)] [\(level)] \(msg)"
+        queue.async {
+            print(line)
+            if let data = (line + "\n").data(using: .utf8) {
+                if let fh = FileHandle(forWritingAtPath: Config.logFile) {
+                    fh.seekToEndOfFile()
+                    fh.write(data)
+                    fh.closeFile()
+                } else {
+                    try? data.write(to: URL(fileURLWithPath: Config.logFile), options: .atomic)
+                }
             }
-        } else {
-            try? data.write(to: URL(fileURLWithPath: Config.logFile), options: .atomic)
         }
     }
+
+    func info(_ m: String) { log("INFO ", m) }
+    func ok(_ m: String) { log(" OK  ", m) }
+    func warn(_ m: String) { log("WARN ", m) }
+    func error(_ m: String) { log("ERROR", m) }
+    func separator() { log("", "──────────────────────────────────────────────────────────") }
 }
 
 // MARK: - NextcloudClient
 
-class NextcloudClient {
+actor NextcloudClient {
     private let session: URLSession
     private let baseURL: URL
-    private let credentials: String
-    
+    private let user: String
+    private let pass: String
+
     init?() {
-        let user = ProcessInfo.processInfo.environment["NC_USER"] ?? Config.nextcloudUser
-        let pass = ProcessInfo.processInfo.environment["NC_PASS"] ?? Config.nextcloudPass
-        
-        guard !user.isEmpty, !pass.isEmpty else {
-            Logger.shared.error("Nextcloud credentials not set")
+        let u = Config.nextcloudUser
+        let p = Config.nextcloudPass
+        guard !u.isEmpty, !p.isEmpty, let url = URL(string: Config.nextcloudURL) else {
+            Logger.shared.error("Nextcloud credentials not set (NC_USER / NC_PASS)")
             return nil
         }
-        
-        guard let url = URL(string: Config.nextcloudURL) else {
-            Logger.shared.error("Invalid Nextcloud URL: \(Config.nextcloudURL)")
-            return nil
-        }
-        
+        self.user = u
+        self.pass = p
         self.baseURL = url
-        self.credentials = "\(user):\(pass)"
-        
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: config)
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 300
+        self.session = URLSession(configuration: cfg)
     }
-    
-    private func authHeader() -> String {
-        let data = credentials.data(using: .utf8)!
-        return "Basic \(data.base64EncodedString())"
+
+    private func authValue() -> String {
+        "Basic \(Data("\(user):\(pass)".utf8).base64EncodedString())"
     }
-    
+
     func testConnection() async -> Bool {
-        let url = baseURL.appendingPathComponent("ocs/v2.php/cloud/user")
-        var request = URLRequest(url: url)
-        request.setValue(authHeader(), forHTTPHeaderField: "Authorization")
-        request.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
-        
-        do {
-            let (_, response) = try await session.data(for: request)
-            return (response as? HTTPURLResponse)?.statusCode == 200
-        } catch {
-            return false
-        }
+        var req = URLRequest(url: baseURL.appendingPathComponent("ocs/v2.php/cloud/user"))
+        req.setValue(authValue(), forHTTPHeaderField: "Authorization")
+        req.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
+        guard let (_, resp) = try? await session.data(for: req) else { return false }
+        return (resp as? HTTPURLResponse)?.statusCode == 200
     }
-    
-    func upload(file: String, to remotePath: String) async -> Bool {
-        let fileURL = URL(fileURLWithPath: file)
-        let fileName = fileURL.lastPathComponent
-        let remoteURL = baseURL.appendingPathComponent("dav/files/\(Config.nextcloudUser)\(remotePath)/\(fileName)")
-        
-        // Create directory if needed
-        let dirURL = baseURL.appendingPathComponent("dav/files/\(Config.nextcloudUser)\(remotePath)")
-        var dirRequest = URLRequest(url: dirURL)
-        dirRequest.httpMethod = "MKCOL"
-        dirRequest.setValue(authHeader(), forHTTPHeaderField: "Authorization")
-        _ = try? await session.data(for: dirRequest)
-        
-        // Upload file
-        var request = URLRequest(url: remoteURL)
-        request.httpMethod = "PUT"
-        request.setValue(authHeader(), forHTTPHeaderField: "Authorization")
-        
-        do {
-            let fileData = try Data(contentsOf: fileURL)
-            let (_, response) = try await session.upload(for: request, from: fileData)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return statusCode >= 200 && statusCode < 300
-        } catch {
-            Logger.shared.error("Upload failed: \(error)")
-            return false
-        }
+
+    func upload(file: String) async -> Bool {
+        let name = (file as NSString).lastPathComponent
+        let remote = baseURL.appendingPathComponent("dav/files/\(user)\(Config.uploadPath)/\(name)")
+        let dir = baseURL.appendingPathComponent("dav/files/\(user)\(Config.uploadPath)")
+
+        // MKCOL (ignore errors)
+        var mk = URLRequest(url: dir)
+        mk.httpMethod = "MKCOL"
+        mk.setValue(authValue(), forHTTPHeaderField: "Authorization")
+        _ = try? await session.data(for: mk)
+
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else { return false }
+        var req = URLRequest(url: remote)
+        req.httpMethod = "PUT"
+        req.setValue(authValue(), forHTTPHeaderField: "Authorization")
+        guard let (_, resp) = try? await session.upload(for: req, from: data) else { return false }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        return code >= 200 && code < 300
     }
-    
+
     func createShare(filePath: String) async -> String? {
         let url = baseURL.appendingPathComponent("ocs/v2.php/apps/files_sharing/api/v1/shares")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(authHeader(), forHTTPHeaderField: "Authorization")
-        request.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        
-        let body = "path=\(filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath)&shareType=3&permissions=1"
-        request.httpBody = body.data(using: .utf8)
-        
-        do {
-            let (data, _) = try await session.data(for: request)
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let ocs = json?["ocs"] as? [String: Any]
-            let meta = ocs?["meta"] as? [String: Any]
-            let statusCode = meta?["statuscode"] as? Int ?? 0
-            
-            if statusCode == 100 {
-                let shareData = ocs?["data"] as? [String: Any]
-                return shareData?["token"] as? String
-            }
-        } catch {
-            Logger.shared.error("Create share failed: \(error)")
-        }
-        return nil
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue(authValue(), forHTTPHeaderField: "Authorization")
+        req.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = "path=\(filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath)&shareType=3&permissions=1".data(using: .utf8)
+
+        guard let (data, _) = try? await session.data(for: req) else { return nil }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ocs = json["ocs"] as? [String: Any],
+              let meta = ocs["meta"] as? [String: Any],
+              meta["statuscode"] as? Int == 100,
+              let d = ocs["data"] as? [String: Any],
+              let token = d["token"] as? String else { return nil }
+        return token
     }
 }
 
-// MARK: - SambaManager
-
-class SambaManager {
-    static func findAvailableShare() -> String? {
-        for share in Config.sambaShares {
-            if FileManager.default.fileExists(atPath: share) {
-                return share
-            }
-        }
-        return nil
-    }
-    
-    static func copy(file: String, to sambaRoot: String, remotePath: String) -> Bool {
-        let fileURL = URL(fileURLWithPath: file)
-        let fileName = fileURL.lastPathComponent
-        let destDir = "\(sambaRoot)\(remotePath)"
-        let destFile = "\(destDir)/\(fileName)"
-        
-        do {
-            try FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(atPath: file, toPath: destFile)
-            return true
-        } catch {
-            Logger.shared.error("Samba copy failed: \(error)")
-            return false
-        }
-    }
-}
-
-// MARK: - ClipboardManager
-
-class ClipboardManager {
-    static func copyToClipboard(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-    }
-    
-    static func getClipboard() -> String? {
-        return NSPasteboard.general.string(forType: .string)
-    }
-}
-
-// MARK: - FileWatcher
+// MARK: - FileWatcher using kqueue
 
 class FileWatcher {
-    private var stream: FSEventStreamRef?
-    private let callback: (String) -> Void
-    
-    init(path: String, callback: @escaping (String) -> Void) {
+    private var fd: Int32 = -1
+    private var source: DispatchSourceFileSystemObject?
+    private let callback: () -> Void
+
+    init(path: String, callback: @escaping () -> Void) {
         self.callback = callback
-        startWatching(path: path)
-    }
-    
-    deinit {
-        stopWatching()
-    }
-    
-    private func startWatching(path: String) {
-        let pathsToWatch = [path] as CFArray
-        
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
-        
-        stream = FSEventStreamCreate(
-            nil,
-            { (stream, contextInfo, numEvents, eventPaths, eventFlags, eventIds) in
-                guard let contextInfo = contextInfo else { return }
-                let watcher = Unmanaged<FileWatcher>.fromOpaque(contextInfo).takeUnretainedValue()
-                
-                let paths = unsafeBitCast(eventPaths, to: NSArray.self) as! [String]
-                
-                for i in 0..<numEvents {
-                    let flags = eventFlags[i]
-                    let path = paths[i]
-                    
-                    // Only process file events (not directory events)
-                    if flags & UInt32(kFSEventStreamItemFlagIsFile) != 0 {
-                        // Check for rename/move events
-                        if flags & UInt32(kFSEventStreamItemFlagItemRenamed) != 0 ||
-                           flags & UInt32(kFSEventStreamItemFlagItemModified) != 0 {
-                            watcher.callback(path)
-                        }
-                    }
-                }
-            },
-            &context,
-            pathsToWatch,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            1.0, // Latency in seconds
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
-        )
-        
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.global(qos: .utility))
-        FSEventStreamStart(stream!)
-    }
-    
-    private func stopWatching() {
-        if let stream = stream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
+        fd = open(path, O_EVTONLY)
+        guard fd >= 0 else {
+            Logger.shared.error("Failed to open watch dir: \(path)")
+            return
         }
+        source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .attrib],
+            queue: DispatchQueue.global(qos: .utility)
+        )
+        source?.setEventHandler { [weak self] in self?.callback() }
+        source?.setCancelHandler { [weak self] in
+            if let fd = self?.fd, fd >= 0 { close(fd) }
+        }
+        source?.resume()
     }
+
+    deinit { source?.cancel() }
 }
 
 // MARK: - ClipProcessor
 
 class ClipProcessor {
-    private let nextcloud: NextcloudClient?
-    private let processingQueue = DispatchQueue(label: "com.clip-watcher.processor", qos: .userInitiated, attributes: .concurrent)
-    private var processedFiles: Set<String> = []
-    private var inFlightFiles: Set<String> = []
-    private let lock = NSLock()
-    
-    init() {
-        self.nextcloud = NextcloudClient()
-        loadProcessedFiles()
+    let nextcloud: NextcloudClient?
+    private let queue = DispatchQueue(label: "com.clip-watcher.proc", qos: .userInitiated, attributes: .concurrent)
+    private var processed = Set<String>()
+    private var inFlight = Set<String>()
+    private let lock = NSRecursiveLock()
+
+    init() { nextcloud = NextcloudClient(); loadProcessed() }
+
+    private func loadProcessed() {
+        guard let s = try? String(contentsOfFile: Config.processedLog, encoding: .utf8) else { return }
+        processed = Set(s.components(separatedBy: .newlines).filter { !$0.isEmpty })
     }
-    
-    private func loadProcessedFiles() {
-        guard let data = FileManager.default.contents(atPath: Config.processedLog),
-              let content = String(data: data, encoding: .utf8) else { return }
-        
-        let files = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        processedFiles = Set(files)
-    }
-    
+
     func process(file: String) {
         lock.lock()
         defer { lock.unlock() }
-        
-        // Skip if already processed or in-flight
-        if processedFiles.contains(file) || inFlightFiles.contains(file) {
-            return
-        }
-        
-        // Mark as in-flight
-        inFlightFiles.insert(file)
-        
-        processingQueue.async { [weak self] in
-            self?.processFile(file)
-        }
+        guard !processed.contains(file), !inFlight.contains(file) else { return }
+        inFlight.insert(file)
+        queue.async { self.processFile(file) }
     }
-    
+
     private func processFile(_ file: String) {
-        let fileName = (file as NSString).lastPathComponent
-        
-        Logger.shared.info("[\(fileName)] Processing started")
-        Logger.shared.info("[\(fileName)] Waiting for file to stabilize...")
-        
-        // Wait for file to stabilize
-        guard waitForFileToStabilize(file) else {
-            Logger.shared.error("[\(fileName)] File never stabilized, skipping")
+        let name = (file as NSString).lastPathComponent
+        Logger.shared.info("[\(name)] Processing started")
+        Logger.shared.info("[\(name)] Waiting for file to stabilize...")
+
+        guard waitForStable(file) else {
+            Logger.shared.error("[\(name)] File never stabilized, skipping")
             removeInFlight(file)
             return
         }
-        
-        let fileSize = fileSize(file)
-        Logger.shared.info("[\(fileName)] File ready: \(fileSize / 1024 / 1024)MB")
-        
-        // Upload and share
+
+        let sz = fileSize(file)
+        Logger.shared.info("[\(name)] File ready: \(sz / 1024 / 1024)MB")
+
         Task {
-            let success = await uploadAndShare(file: file)
-            
-            if success {
-                // Mark as processed
-                lock.lock()
-                processedFiles.insert(file)
-                inFlightFiles.remove(file)
-                lock.unlock()
-                
-                // Append to processed log
-                appendToFile(Config.processedLog, content: file + "\n")
-                
-                Logger.shared.ok("[\(fileName)] Done")
-                Logger.shared.separator()
-            } else {
+            guard let nc = nextcloud else {
+                Logger.shared.error("Nextcloud client not available")
                 removeInFlight(file)
+                return
             }
+
+            Logger.shared.info("Uploading: \(name) (\(sz / 1024 / 1024)MB)")
+
+            // Try Samba first
+            var method = "webdav"
+            if let samba = sambaRoot() {
+                Logger.shared.info("Using Samba share: \(samba)")
+                let dest = "\(samba)\(Config.uploadPath)/\(name)"
+                let destDir = "\(samba)\(Config.uploadPath)"
+                if (try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)) != nil,
+                   (try? FileManager.default.copyItem(atPath: file, toPath: dest)) != nil {
+                    method = "samba"
+                    Logger.shared.ok("Copied to Samba: \(dest)")
+                } else {
+                    Logger.shared.warn("Samba copy failed, falling back to WebDAV")
+                }
+            }
+
+            if method == "webdav" {
+                let ok = await nc.upload(file: file)
+                guard ok else {
+                    Logger.shared.error("Upload failed for \(name)")
+                    removeInFlight(file)
+                    return
+                }
+                Logger.shared.ok("Uploaded via WebDAV: \(Config.uploadPath)/\(name)")
+            }
+
+            guard let token = await nc.createShare(filePath: "\(Config.uploadPath)/\(name)") else {
+                Logger.shared.error("Failed to create share for \(name)")
+                removeInFlight(file)
+                return
+            }
+
+            let url = Config.useNcembed
+                ? "https://\(Config.ncembedDomain)/embed/\(token)"
+                : "\(Config.nextcloudURL)/s/\(token)"
+
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url, forType: .string)
+
+            let ts = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+            appendFile(Config.urlLog, "\(ts)\t\(url)\t\(name)\n")
+
+            Logger.shared.ok("Link copied: \(url)")
+            sendNotification(title: "Clip Ready", message: url)
+
+            lock.lock()
+            processed.insert(file)
+            inFlight.remove(file)
+            lock.unlock()
+            appendFile(Config.processedLog, file + "\n")
+            Logger.shared.ok("[\(name)] Done")
+            Logger.shared.separator()
         }
     }
-    
-    private func waitForFileToStabilize(_ file: String) -> Bool {
-        var stableCount = 0
-        var previousSize = fileSize(file)
-        
+
+    private func waitForStable(_ file: String) -> Bool {
+        var prev = fileSize(file), stable = 0
         for _ in 0..<30 {
             Thread.sleep(forTimeInterval: Config.stableInterval)
-            let currentSize = fileSize(file)
-            
-            if currentSize == previousSize && currentSize > 0 {
-                stableCount += 1
-                if stableCount >= Config.stableChecks {
-                    return true
-                }
-            } else {
-                stableCount = 0
-            }
-            
-            previousSize = currentSize
+            let cur = fileSize(file)
+            if cur == prev && cur > 0 { stable += 1; if stable >= Config.stableChecks { return true } }
+            else { stable = 0 }
+            prev = cur
         }
-        
         return false
     }
-    
-    private func uploadAndShare(file: String) async -> Bool {
-        let fileName = (file as NSString).lastPathComponent
-        let fileSize = fileSize(file)
-        
-        Logger.shared.info("Uploading: \(fileName) (\(fileSize / 1024 / 1024)MB)")
-        
-        // Try Samba first
-        var uploadMethod = "webdav"
-        if let sambaRoot = SambaManager.findAvailableShare() {
-            Logger.shared.info("Using Samba share: \(sambaRoot)")
-            if SambaManager.copy(file: file, to: sambaRoot, remotePath: Config.uploadPath) {
-                uploadMethod = "samba"
-                Logger.shared.ok("Copied to Samba: \(sambaRoot)\(Config.uploadPath)/\(fileName)")
-            } else {
-                Logger.shared.warn("Samba copy failed, falling back to WebDAV")
-            }
-        }
-        
-        // Fall back to WebDAV if needed
-        if uploadMethod == "webdav" {
-            guard let nextcloud = nextcloud else {
-                Logger.shared.error("Nextcloud client not available")
-                return false
-            }
-            
-            let success = await nextcloud.upload(file: file, to: Config.uploadPath)
-            if success {
-                Logger.shared.ok("Uploaded via WebDAV: \(Config.uploadPath)/\(fileName)")
-            } else {
-                Logger.shared.error("Upload failed for \(fileName)")
-                return false
-            }
-        }
-        
-        // Create share link
-        guard let nextcloud = nextcloud else { return false }
-        guard let token = await nextcloud.createShare(filePath: "\(Config.uploadPath)/\(fileName)") else {
-            Logger.shared.error("Failed to create share for \(fileName)")
-            return false
-        }
-        
-        // Generate share URL
-        let shareURL: String
-        if Config.useNcembed {
-            shareURL = "https://\(Config.ncembedDomain)/embed/\(token)"
-        } else {
-            shareURL = "\(Config.nextcloudURL)/s/\(token)"
-        }
-        
-        // Copy to clipboard
-        ClipboardManager.copyToClipboard(shareURL)
-        
-        // Log URL
-        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
-        appendToFile(Config.urlLog, content: "\(timestamp)\t\(shareURL)\t\(fileName)\n")
-        
-        Logger.shared.ok("Link copied: \(shareURL)")
-        
-        // Send notification
-        sendNotification(title: "Clip Ready", message: shareURL)
-        
-        return true
+
+    private func fileSize(_ f: String) -> Int {
+        (try? FileManager.default.attributesOfItem(atPath: f)[.size] as? Int) ?? 0
     }
-    
-    private func removeInFlight(_ file: String) {
-        lock.lock()
-        inFlightFiles.remove(file)
-        lock.unlock()
+
+    private func sambaRoot() -> String? {
+        Config.sambaShares.first { FileManager.default.fileExists(atPath: $0) }
     }
-    
-    private func fileSize(_ file: String) -> Int {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: file) else { return 0 }
-        return attrs[.size] as? Int ?? 0
+
+    private func removeInFlight(_ f: String) {
+        lock.lock(); inFlight.remove(f); lock.unlock()
     }
-    
-    private func appendToFile(_ file: String, content: String) {
-        guard let data = content.data(using: .utf8) else { return }
-        
-        if FileManager.default.fileExists(atPath: file) {
-            if let fileHandle = FileHandle(forWritingAtPath: file) {
-                fileHandle.seekToEndOfFile()
-                fileHandle.write(data)
-                fileHandle.closeFile()
-            }
-        } else {
-            try? data.write(to: URL(fileURLWithPath: file), options: .atomic)
-        }
+
+    private func appendFile(_ path: String, _ content: String) {
+        guard let d = content.data(using: .utf8) else { return }
+        if let fh = FileHandle(forWritingAtPath: path) { fh.seekToEndOfFile(); fh.write(d); fh.closeFile() }
+        else { try? d.write(to: URL(fileURLWithPath: path), options: .atomic) }
     }
-    
+
     private func sendNotification(title: String, message: String) {
-        DispatchQueue.main.async {
-            let notification = NSUserNotification()
-            notification.title = title
-            notification.informativeText = message
-            notification.soundName = NSUserNotificationDefaultSoundName
-            NSUserNotificationCenter.default.deliver(notification)
-        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = message
+        content.sound = .default
+        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
     }
 }
 
 // MARK: - ClipWatcher
 
 class ClipWatcher {
-    private var fileWatcher: FileWatcher?
+    private var dirWatcher: FileWatcher?
     private let processor: ClipProcessor
-    private var isRunning = false
-    
-    init() {
-        self.processor = ClipProcessor()
-    }
-    
+
+    init() { processor = ClipProcessor() }
+
     func start() async {
-        guard !isRunning else {
-            Logger.shared.warn("Clip-watcher is already running")
-            return
-        }
-        
         Logger.shared.separator()
         Logger.shared.info("clip-watcher starting")
         Logger.shared.info("Watching: \(Config.watchDir)")
-        Logger.shared.info("Temp dir: \(Config.tempDir)")
         Logger.shared.info("Nextcloud: \(Config.nextcloudURL)")
-        Logger.shared.info("Upload path: \(Config.uploadPath)")
         Logger.shared.info("ncembed: \(Config.ncembedDomain)")
-        
-        // Check Samba shares
-        if let sambaRoot = SambaManager.findAvailableShare() {
-            Logger.shared.ok("Samba share available: \(sambaRoot)")
+
+        if let s = Config.sambaShares.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            Logger.shared.ok("Samba share available: \(s)")
         } else {
-            Logger.shared.warn("No Samba shares mounted (will use WebDAV fallback)")
+            Logger.shared.warn("No Samba shares mounted")
         }
-        
-        Logger.shared.info("Size limit: \(Config.sizeLimitMB)MB")
         Logger.shared.separator()
-        
-        // Test Nextcloud connection
-        if let nextcloud = processor.nextcloud {
+
+        if let nc = processor.nextcloud {
             Logger.shared.info("Testing Nextcloud connection...")
-            let connected = await nextcloud.testConnection()
-            if connected {
-                Logger.shared.ok("Nextcloud connection OK")
-            } else {
-                Logger.shared.error("Nextcloud connection failed")
-                return
-            }
+            if await nc.testConnection() { Logger.shared.ok("Nextcloud connection OK") }
+            else { Logger.shared.error("Nextcloud connection failed"); return }
         }
-        
-        // Create directories
+
         try? FileManager.default.createDirectory(atPath: Config.tempDir, withIntermediateDirectories: true)
-        
-        // Write PID file
-        writePIDFile()
-        
-        // Start file watcher
-        fileWatcher = FileWatcher(path: Config.watchDir) { [weak self] filePath in
-            self?.handleFileEvent(filePath)
-        }
-        
-        isRunning = true
+        try? "\(ProcessInfo.processInfo.processIdentifier)".write(toFile: Config.pidFile, atomically: true, encoding: .utf8)
+
+        dirWatcher = FileWatcher(path: Config.watchDir) { [weak self] in self?.scan() }
         Logger.shared.info("File watcher started")
-        
-        // Keep running
-        RunLoop.main.run()
+
+        // Keep alive
+        while true { try? await Task.sleep(nanoseconds: 60_000_000_000) }
     }
-    
+
     func stop() {
-        fileWatcher = nil
-        isRunning = false
-        removePIDFile()
+        dirWatcher = nil
+        try? FileManager.default.removeItem(atPath: Config.pidFile)
         Logger.shared.info("clip-watcher stopped")
         Logger.shared.separator()
     }
-    
-    private func handleFileEvent(_ filePath: String) {
-        let fileName = (filePath as NSString).lastPathComponent
-        let fileExtension = (filePath as NSString).pathExtension.lowercased()
-        
-        // Skip if not a supported file type
-        guard Config.allExtensions.contains(fileExtension) else { return }
-        
-        // Skip temp directory files
-        if filePath.hasPrefix(Config.tempDir) { return }
-        
-        // Skip encoded/remux files
-        if fileName.hasPrefix("encoded_") || fileName.hasPrefix("remux_") { return }
-        
-        // Skip exiftool temp files
-        if fileName.contains("_exiftool_tmp") { return }
-        
-        Logger.shared.info("New clip detected: \(fileName)")
-        processor.process(file: filePath)
-    }
-    
-    private func writePIDFile() {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        try? "\(pid)".write(toFile: Config.pidFile, atomically: true, encoding: .utf8)
-    }
-    
-    private func removePIDFile() {
-        try? FileManager.default.removeItem(atPath: Config.pidFile)
+
+    private func scan() {
+        guard let items = try? FileManager.default.contentsOfDirectory(atPath: Config.watchDir) else { return }
+        for item in items {
+            let ext = (item as NSString).pathExtension.lowercased()
+            guard Config.allExtensions.contains(ext) else { continue }
+            guard !item.hasPrefix("encoded_"), !item.hasPrefix("remux_"), !item.contains("_exiftool_tmp") else { continue }
+            let full = "\(Config.watchDir)/\(item)"
+            Logger.shared.info("New clip detected: \(item)")
+            processor.process(file: full)
+        }
     }
 }
 
@@ -616,18 +375,13 @@ class ClipWatcher {
 
 let watcher = ClipWatcher()
 
-// Handle signals for graceful shutdown
-signal(SIGINT) { _ in
-    watcher.stop()
-    exit(0)
-}
+signal(SIGINT) { _ in watcher.stop(); exit(0) }
+signal(SIGTERM) { _ in watcher.stop(); exit(0) }
 
-signal(SIGTERM) { _ in
-    watcher.stop()
-    exit(0)
-}
-
-// Start the watcher
 Task {
+    // Request notification permission
+    try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
     await watcher.start()
 }
+
+RunLoop.main.run()

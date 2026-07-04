@@ -74,6 +74,7 @@ Edit the top of `clip-watcher.sh`:
 WATCH_DIR="/path/to/your/recordings"     # Folder to monitor
 NC_UPLOAD_PATH="/Videos/clips"           # Remote folder in Nextcloud
 NCEMBED_DOMAIN="share.yournextcloud.com" # Your ncembed domain
+USE_NCEMBED=true                         # false = use raw Nextcloud share links
 
 # Samba shares (optional — much faster for local network)
 SAMBA_SHARES=(
@@ -106,6 +107,7 @@ The script checks if these directories exist and uses the first available one. I
 ```bash
 clip              # Start watching (runs in background)
 clip --debug      # Start with verbose logging
+clip --no-ncembed # Start with raw Nextcloud share links (no ncembed)
 clip stop         # Stop the watcher
 clip status       # Show watcher status, recent uploads
 clip last         # Copy last share URL to clipboard
@@ -117,7 +119,7 @@ clip log          # Tail the live log
 
 #### How it works
 
-1. `fswatch` monitors `WATCH_DIR` for new `.mp4`, `.mkv`, `.mov`, `.avi`, `.webm` files
+1. `fswatch` monitors `WATCH_DIR` for new video and image files (mp4, mkv, mov, avi, webm, png, jpg, gif, etc.)
 2. When a file stabilizes (no size changes for 6 seconds), it copies/uploads to Nextcloud:
    - **Samba share** (preferred): Direct local network copy to mounted share — much faster for large files
    - **WebDAV fallback**: Upload via Nextcloud API if no Samba shares are available

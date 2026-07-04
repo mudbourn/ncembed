@@ -54,6 +54,10 @@ STABLE_INTERVAL=2                 # Seconds between checks
 
 # File patterns to watch (space-separated globs)
 VIDEO_EXTENSIONS="mp4 mkv mov avi webm"
+IMAGE_EXTENSIONS="png jpg jpeg gif webp bmp tiff"
+
+# Link behavior
+USE_NCEMBED=true                  # Set to false to use raw Nextcloud share links instead of ncembed
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -163,6 +167,16 @@ nc_to_ncembed() {
     echo "https://$NCEMBED_DOMAIN/embed/$TOKEN"
 }
 
+nc_to_share_url() {
+    # Convert a Nextcloud share token to a share URL (raw or ncembed)
+    local TOKEN="$1"
+    if $USE_NCEMBED; then
+        nc_to_ncembed "$TOKEN"
+    else
+        echo "$NEXTCLOUD_URL/s/$TOKEN"
+    fi
+}
+
 # ── Samba helpers ────────────────────────────────────────────────────────────
 
 find_samba_share() {
@@ -220,9 +234,14 @@ cmd_start() {
         fi
     fi
 
+    # Build flags to pass to backgrounded process
+    local FLAGS=""
+    $DEBUG && FLAGS="$FLAGS --debug"
+    $USE_NCEMBED || FLAGS="$FLAGS --no-ncembed"
+
     # Background the watcher
     echo "Starting clip-watcher in background..."
-    nohup "$0" --run >> "$LOG_FILE" 2>&1 &
+    nohup "$0" --run $FLAGS >> "$LOG_FILE" 2>&1 &
     sleep 1
 
     # Verify it started
@@ -411,6 +430,7 @@ esac
 DEBUG=false
 [[ "$1" == "--debug" ]] && DEBUG=true
 [[ "$1" == "--run" ]] && shift  # Internal flag for backgrounded process
+[[ "$1" == "--no-ncembed" ]] && { USE_NCEMBED=false; shift; }
 
 # ── Startup ──────────────────────────────────────────────────────────────────
 
@@ -422,6 +442,7 @@ log_info "Log file: $LOG_FILE"
 log_info "Nextcloud: $NEXTCLOUD_URL"
 log_info "Upload path: $NC_UPLOAD_PATH"
 log_info "ncembed: $NCEMBED_DOMAIN"
+log_info "Link mode: $(if $USE_NCEMBED; then echo 'ncembed'; else echo 'raw Nextcloud'; fi)"
 
 # Check Samba shares
 SAMBA_ROOT=$(find_samba_share)
@@ -517,9 +538,9 @@ upload_and_share() {
         return 1
     fi
 
-    # Convert to ncembed URL
+    # Convert to share URL (ncembed or raw Nextcloud)
     local SHARE_URL
-    SHARE_URL=$(nc_to_ncembed "$TOKEN")
+    SHARE_URL=$(nc_to_share_url "$TOKEN")
 
     # Copy to clipboard
     echo -n "$SHARE_URL" | pbcopy
@@ -586,9 +607,9 @@ process_clip() { _run_process_clip "$@"; }
 
 log_info "Starting fswatch on $WATCH_DIR"
 
-# Build extension filter for fswatch
+# Build extension filter for fswatch (videos + images)
 EXT_FILTER=""
-for ext in $VIDEO_EXTENSIONS; do
+for ext in $VIDEO_EXTENSIONS $IMAGE_EXTENSIONS; do
     EXT_FILTER="$EXT_FILTER --include=.*\\.$ext\$"
 done
 

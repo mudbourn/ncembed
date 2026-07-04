@@ -47,6 +47,9 @@ cmd_start() {
 }
 
 cmd_stop() {
+    # Stop menu bar app if running
+    pkill -f "ClipWatcherMenu.swift" 2>/dev/null
+
     if [ ! -f "$PID_FILE" ]; then
         echo "clip-watcher is not running (no PID file found)"
         exit 0

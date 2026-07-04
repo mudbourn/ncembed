@@ -485,6 +485,9 @@ class ClipWatcher {
             // Skip files that existed before watcher started
             guard !existingFiles.contains(item) else { continue }
             
+            // Skip hidden/temp files (macOS creates these during writes)
+            guard !item.hasPrefix(".") else { continue }
+            
             let ext = (item as NSString).pathExtension.lowercased()
             guard Config.allExtensions.contains(ext) else { continue }
             guard !item.hasPrefix("encoded_"), !item.hasPrefix("remux_"), !item.contains("_exiftool_tmp") else { continue }

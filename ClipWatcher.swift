@@ -2,7 +2,6 @@
 
 import Cocoa
 import Foundation
-import UserNotifications
 
 // MARK: - Configuration
 
@@ -304,12 +303,13 @@ class ClipProcessor {
     }
 
     private func sendNotification(title: String, message: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = message
-        content.sound = .default
-        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(req)
+        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedMsg = message.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(escapedMsg)\" with title \"\(escapedTitle)\""
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        try? proc.run()
     }
 }
 
@@ -379,8 +379,6 @@ signal(SIGINT) { _ in watcher.stop(); exit(0) }
 signal(SIGTERM) { _ in watcher.stop(); exit(0) }
 
 Task {
-    // Request notification permission
-    try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
     await watcher.start()
 }
 

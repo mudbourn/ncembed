@@ -94,7 +94,12 @@ Run `clip setup` or edit `~/.config/clip-watcher/config.json`:
       "mountPath": "/Volumes/Share/nextcloud",
       "nextcloudPath": "/ExternalStorage"
     }
-  ]
+  ],
+  "sshScan": {
+    "host": "user@server",
+    "container": "nextcloud",
+    "scanPath": "/username/files/ExternalStorage"
+  }
 }
 ```
 
@@ -105,6 +110,27 @@ Format: `mountPath:nextcloudPath`
 - `nextcloudPath` — path as seen in Nextcloud
 
 Example: `/Volumes/SSD/nextcloud:/ExternalSSD`
+
+#### SSH File Scan
+
+Nextcloud doesn't automatically detect files copied directly to external storage via Samba. The SSH scan feature forces Nextcloud to reindex files after they're copied.
+
+**How it works:**
+1. Copy file via Samba (fast local network)
+2. SSH into your server
+3. Run `docker exec -u www-data nextcloud php occ files:scan --path=/path/to/folder -q`
+4. Nextcloud indexes the new file
+5. Create share link
+
+**Configuration:**
+- `host` — SSH connection (e.g., `user@192.168.1.100`)
+- `container` — Docker container name (e.g., `nextcloud`)
+- `scanPath` — Path to scan (e.g., `/mudbourn/files/ExternalSSD`)
+
+**Requirements:**
+- SSH key authentication (no password prompts)
+- Docker access on the server
+- `occ` command available in the container
 
 #### Supported Formats
 

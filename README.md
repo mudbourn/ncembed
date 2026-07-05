@@ -25,56 +25,81 @@ embeds the video just like YouTube.
 
 ### Clip Watcher
 
-A unified macOS menu bar app and file watcher. Monitors a folder for new video/image files, uploads them to Nextcloud, and creates share links.
+A native macOS menu bar app that watches for new screen recordings and clips, uploads them to
+Nextcloud, and copies an embeddable share link to your clipboard — all automatically.
 
-**No external dependencies** — native macOS Swift app.
+**Zero dependencies.** Pure Swift using Cocoa and Foundation. No Python, no shell scripts, no Homebrew.
 
-#### Quick Start
-
-```bash
-# First time setup
-clip setup
-
-# Start (menu bar + watcher)
-clip
-
-# Or explicitly
-clip start
+```
+ ┌─────────────────────────────┐
+ │  ▶ Clip                     │  ← menu bar icon
+ ├─────────────────────────────┤
+ │  Status: Watching           │
+ │                             │
+ │  Copy Last Link       ⌘C   │
+ │  Tail Log             ⌘L   │
+ │  Clear Log                  │
+ │                             │
+ │  Restart              ⌘R   │
+ │  Quit                 ⌘Q   │
+ └─────────────────────────────┘
 ```
 
-#### Commands
+#### Quick start
 
 ```bash
-clip setup        # First-time configuration
-clip start        # Start menu bar app + watcher
-clip stop         # Stop everything
-clip status       # Show status and recent uploads
-clip last         # Copy last share URL to clipboard
-clip clear        # Clear processed log
-clip log          # Tail the live log
+# One-time setup (interactive prompts for Nextcloud credentials, paths, etc.)
+swift ClipWatcher.swift setup
+
+# Launch — appears in your menu bar immediately
+swift ClipWatcher.swift
 ```
 
-#### Menu Bar
+Or use the `clip` wrapper:
+```bash
+clip setup    # first-time config
+clip          # start (menu bar + watcher)
+clip stop     # stop
+clip status   # show status + recent uploads
+clip last     # copy last share URL to clipboard
+clip log      # tail the live log
+```
 
-The app runs in your menu bar:
-- **▶ Clip** — watcher is running
-- **⏹ Clip** — watcher is stopped
+#### What it does
 
-Click to see menu:
-- Copy Last Link
-- Tail Log
-- Restart
-- Quit
+1. Watches `~/Movies/Captures` (configurable) for new video/image files
+2. Waits for the file to finish writing (stable size checks)
+3. Copies to Nextcloud via Samba (fast local) or WebDAV (fallback)
+4. Triggers a Nextcloud file scan so it's indexed immediately
+5. Creates a public share link
+6. Builds an ncembed URL and copies it to your clipboard
+7. Shows a macOS notification — paste into Discord and it just works
 
 #### Features
 
-- **Unified service** — menu bar app + file watcher in one process
-- **Auto-sort** — videos and images saved to separate folders
-- **Samba support** — fast local network copies when available
-- **ncembed links** — generates embeddable share links for Discord
-- **Debounced scanning** — efficient file system monitoring
+- **Native menu bar app** — lives in your menu bar, no terminal window needed
+- **Auto-sort** — videos and images go to separate subfolders
+- **Samba + WebDAV** — uses fast local Samba when available, falls back to WebDAV
+- **SSH file scan** — forces Nextcloud to index Samba-copied files instantly
+- **ncembed prewarming** — pre-caches the embed page so Discord gets OG tags instantly
+- **Log rotation** — auto-rotates at 5 MB, keeps one backup; clear from the menu
+- **Debounced scanning** — efficient file system monitoring via GCD
 - **Skip existing** — only processes files added after launch
-- **Skip temp files** — ignores hidden/temporary files
+- **Skip temp files** — ignores hidden files, `encoded_*`, `remux_*`, exiftool temps
+
+#### Menu bar
+
+| Icon | Meaning |
+|------|---------|
+| ▶ Clip | Watcher is running |
+| ⏹ Clip | Watcher is stopped |
+
+Click the icon for:
+- **Copy Last Link** — copies the most recent ncembed URL to clipboard
+- **Tail Log** — opens the log file in your default editor
+- **Clear Log** — truncates the log (old log rotated to `.log.1` automatically at 5 MB)
+- **Restart** — restarts the watcher
+- **Quit** — stops everything and removes the menu bar icon
 
 #### Configuration
 
@@ -86,7 +111,7 @@ Run `clip setup` or edit `~/.config/clip-watcher/config.json`:
   "nextcloudURL": "https://cloud.example.com",
   "nextcloudUser": "username",
   "nextcloudPass": "app-password",
-  "uploadPath": "",
+  "uploadPath": "/Videos/clips",
   "ncembedDomain": "embed.example.com",
   "useNcembed": true,
   "sambaShares": [
@@ -103,39 +128,34 @@ Run `clip setup` or edit `~/.config/clip-watcher/config.json`:
 }
 ```
 
-#### Samba Shares
+#### Samba shares
 
 Format: `mountPath:nextcloudPath`
-- `mountPath` — local mount path
-- `nextcloudPath` — path as seen in Nextcloud
+- `mountPath` — local mount point (e.g. `/Volumes/SSD/nextcloud`)
+- `nextcloudPath` — path as seen inside Nextcloud (e.g. `/ExternalSSD`)
 
-Example: `/Volumes/SSD/nextcloud:/ExternalSSD`
+#### SSH file scan
 
-#### SSH File Scan
+Nextcloud doesn't detect files copied directly to external storage via Samba.
+The SSH scan feature forces a reindex after each copy:
 
-Nextcloud doesn't automatically detect files copied directly to external storage via Samba. The SSH scan feature forces Nextcloud to reindex files after they're copied.
+1. File copied via Samba (fast, local network)
+2. SSH into server → `docker exec -u www-data nextcloud php occ files:scan --path=... -q`
+3. Nextcloud indexes the file → share link works immediately
 
-**How it works:**
-1. Copy file via Samba (fast local network)
-2. SSH into your server
-3. Run `docker exec -u www-data nextcloud php occ files:scan --path=/path/to/folder -q`
-4. Nextcloud indexes the new file
-5. Create share link
+Requirements: SSH key auth (no password prompts), Docker access on server, `occ` available in container.
 
-**Configuration:**
-- `host` — SSH connection (e.g., `user@192.168.1.100`)
-- `container` — Docker container name (e.g., `nextcloud`)
-- `scanPath` — Path to scan (e.g., `/mudbourn/files/ExternalSSD`)
+#### Supported formats
 
-**Requirements:**
-- SSH key authentication (no password prompts)
-- Docker access on the server
-- `occ` command available in the container
+| Type | Extensions |
+|------|-----------|
+| Video | mp4, mkv, mov, avi, webm |
+| Image | png, jpg, jpeg, gif, webp, bmp, tiff |
 
-#### Supported Formats
+#### Deprecated files
 
-**Videos:** mp4, mkv, mov, avi, webm
-**Images:** png, jpg, jpeg, gif, webp, bmp, tiff
+`clip-watcher-menu.py` and the shell-based `clip` wrapper are deprecated in favor of the native
+Swift app. They remain in the repo for reference but are no longer maintained.
 
 ## Notes
 

@@ -52,7 +52,7 @@ struct Config {
     static let videoExtensions: Set<String> = ["mp4", "mkv", "mov", "avi", "webm"]
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"]
     static let allExtensions: Set<String> = videoExtensions.union(imageExtensions)
-    static let stableChecks = 3
+    static let stableChecks = 2
     static let stableInterval: TimeInterval = 2.0
     
     static var file: ConfigFile!
@@ -85,6 +85,7 @@ class Logger {
     static let shared = Logger()
     private let queue = DispatchQueue(label: "com.clip-watcher.logger", qos: .utility)
     private let df = DateFormatter()
+    private static let maxLogSize: UInt64 = 5 * 1024 * 1024  // 5 MB
     var onLog: ((String) -> Void)?
 
     init() { df.dateFormat = "yyyy-MM-dd HH:mm:ss" }
@@ -95,6 +96,7 @@ class Logger {
         queue.async {
             print(line)
             self.onLog?(line)
+            self.rotateIfNeeded()
             if let data = (line + "\n").data(using: .utf8) {
                 if let fh = FileHandle(forWritingAtPath: Config.logFile) {
                     fh.seekToEndOfFile()
@@ -105,6 +107,30 @@ class Logger {
                 }
             }
         }
+    }
+
+    /// Rotate log → .log.1 when it exceeds maxLogSize
+    private func rotateIfNeeded() {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: Config.logFile),
+              let size = attrs[.size] as? UInt64, size >= Logger.maxLogSize else { return }
+        let rotated = Config.logFile + ".1"
+        try? FileManager.default.removeItem(atPath: rotated)
+        try? FileManager.default.moveItem(atPath: Config.logFile, toPath: rotated)
+    }
+
+    /// Truncate the current log file
+    func clear() {
+        queue.async {
+            try? "".write(toFile: Config.logFile, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// Human-readable log file size (e.g. "1.2 MB")
+    func sizeString() -> String {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: Config.logFile),
+              let size = attrs[.size] as? UInt64 else { return "0 KB" }
+        if size >= 1_048_576 { return String(format: "%.1f MB", Double(size) / 1_048_576) }
+        return String(format: "%.0f KB", Double(size) / 1024)
     }
 
     func info(_ m: String) { log("INFO ", m) }
@@ -403,6 +429,10 @@ class ClipProcessor {
             let url: String
             if useNcembed {
                 url = "https://\(Config.file.ncembedDomain)/s/\(finalToken)"
+                // Pre-warm ncembed cache so Discord gets instant OG tags
+                if let prefetchURL = URL(string: "https://\(Config.file.ncembedDomain)/s/\(finalToken)/prefetch") {
+                    URLSession.shared.dataTask(with: prefetchURL).resume()
+                }
             } else {
                 url = "\(Config.file.nextcloudURL)/s/\(finalToken)"
             }
@@ -556,6 +586,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Copy Last Link", action: #selector(copyLastLink), keyEquivalent: "c"))
         menu.addItem(NSMenuItem(title: "Tail Log", action: #selector(tailLog), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: "Clear Log", action: #selector(clearLog), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Restart", action: #selector(restartWatcher), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
@@ -648,6 +679,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if FileManager.default.fileExists(atPath: Config.logFile) {
             NSWorkspace.shared.open(URL(fileURLWithPath: Config.logFile))
         }
+    }
+
+    @objc func clearLog() {
+        Logger.shared.clear()
+        notify("Log Cleared", "clip-watcher.log truncated")
     }
 
     @objc func restartWatcher() {

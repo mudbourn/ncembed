@@ -2,6 +2,12 @@
 """
 clip-watcher menu bar app
 Provides a macOS menu bar interface for clip-watcher.sh
+
+DEPRECATED: Superseded by the native Swift version (ClipWatcher.swift).
+The Swift app has no dependencies, runs as a single binary, and includes
+log rotation, cache prewarming, and a richer menu. Use instead:
+  swift ClipWatcher.swift setup
+  swift ClipWatcher.swift
 """
 
 import rumps

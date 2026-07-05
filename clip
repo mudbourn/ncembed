@@ -1,6 +1,11 @@
 #!/bin/bash
 # Clip Watcher - Unified macOS Service
 # Menu bar app + file watcher in one
+#
+# DEPRECATED: This shell wrapper is superseded by the native Swift app.
+# Run ClipWatcher.swift directly instead:
+#   swift ClipWatcher.swift setup   # first-time config
+#   swift ClipWatcher.swift         # launches menu bar app + watcher
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLIP_WATCHER="$SCRIPT_DIR/ClipWatcher.swift"

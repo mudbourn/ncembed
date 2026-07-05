@@ -40,7 +40,7 @@ _raw_thumb_colors = os.environ.get("EMBED_THUMBNAIL_COLORS", "")
 EMBED_THUMBNAIL_COLORS = [c.strip() for c in _raw_thumb_colors.split("|") if c.strip()]
 
 # ── Share info cache ─────────────────────────────────────────────────────────
-_CACHE_TTL = 300  # seconds
+_CACHE_TTL = 3600  # seconds — file metadata never changes
 _cache: dict = {}
 _cache_lock = threading.Lock()
 
@@ -75,7 +75,7 @@ def get_share_info(token):
             data=propfind_body,
             auth=(token, ""),
             headers={"Depth": "0", "Content-Type": "application/xml"},
-            timeout=10,
+            timeout=5,
         )
         if r.status_code not in (200, 207):
             return None
@@ -190,6 +190,12 @@ def index():
 @app.route("/health")
 def health():
     return Response("ok", status=200, mimetype="text/plain")
+
+@app.route("/s/<token>/prefetch")
+def prefetch(token):
+    """Pre-populate the share info cache so the first real embed load is instant."""
+    get_share_info(token)
+    return Response("", status=204)
 
 @app.route("/s/<token>")
 def embed(token):

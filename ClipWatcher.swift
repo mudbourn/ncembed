@@ -445,31 +445,43 @@ class ClipProcessor {
         
         Logger.shared.info("Triggering Nextcloud file scan via SSH...")
         
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        proc.arguments = [
-            ssh.host,
-            "docker", "exec", "-u", "www-data", ssh.container,
-            "php", "occ", "files:scan", "--path=\(path)", "-q"
-        ]
-        
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        
-        do {
-            try proc.run()
-            proc.waitUntilExit()
+        // Run in background so it doesn't block
+        DispatchQueue.global(qos: .utility).async {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            proc.arguments = [
+                "-o", "ConnectTimeout=5",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "BatchMode=yes",  // Fail if password prompt
+                ssh.host,
+                "docker", "exec", "-u", "www-data", ssh.container,
+                "php", "occ", "files:scan", "--path=\(path)", "-q"
+            ]
             
-            if proc.terminationStatus == 0 {
-                Logger.shared.ok("File scan completed: \(path)")
-            } else {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                Logger.shared.warn("File scan may have issues: \(output.prefix(200))")
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+            
+            do {
+                try proc.run()
+                
+                // Wait max 15 seconds
+                let deadline = Date().addingTimeInterval(15)
+                while proc.isRunning && Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.5)
+                }
+                
+                if proc.isRunning {
+                    proc.terminate()
+                    Logger.shared.warn("File scan timed out (15s)")
+                } else if proc.terminationStatus == 0 {
+                    Logger.shared.ok("File scan completed: \(path)")
+                } else {
+                    Logger.shared.warn("File scan failed (exit code \(proc.terminationStatus))")
+                }
+            } catch {
+                Logger.shared.warn("File scan error: \(error)")
             }
-        } catch {
-            Logger.shared.error("File scan failed: \(error)")
         }
     }
 

@@ -153,8 +153,8 @@ actor NextcloudClient {
 
     func upload(file: String, to path: String) async -> Bool {
         let name = (file as NSString).lastPathComponent
-        let remote = baseURL.appendingPathComponent("dav/files/\(user)\(path)/\(name)")
-        let dir = baseURL.appendingPathComponent("dav/files/\(user)\(path)")
+        let remote = baseURL.appendingPathComponent("remote.php/dav/files/\(user)\(path)/\(name)")
+        let dir = baseURL.appendingPathComponent("remote.php/dav/files/\(user)\(path)")
 
         var mk = URLRequest(url: dir)
         mk.httpMethod = "MKCOL"

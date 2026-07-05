@@ -1,6 +1,0 @@
-#!/bin/bash
-# Launch clip-watcher menu bar app (Swift version)
-# No dependencies required - uses native macOS APIs
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-swift "$SCRIPT_DIR/ClipWatcherMenu.swift"

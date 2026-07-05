@@ -395,9 +395,17 @@ class ClipProcessor {
                 return
             }
 
-            let url = Config.file.useNcembed
-                ? "https://\(Config.file.ncembedDomain)/s/\(finalToken)"
-                : "\(Config.file.nextcloudURL)/s/\(finalToken)"
+            // Videos always use ncembed (for Discord embedding)
+            // Photos use ncembed only if configured
+            let isVideo = Config.videoExtensions.contains(ext)
+            let useNcembed = isVideo || Config.file.useNcembed
+            
+            let url: String
+            if useNcembed {
+                url = "https://\(Config.file.ncembedDomain)/s/\(finalToken)"
+            } else {
+                url = "\(Config.file.nextcloudURL)/s/\(finalToken)"
+            }
 
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url, forType: .string)

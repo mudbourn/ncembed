@@ -321,7 +321,14 @@ class ClipProcessor {
 
             let ext = (name as NSString).pathExtension.lowercased()
             let subfolder = Config.imageExtensions.contains(ext) ? "Images" : "Videos"
-            let uploadPath = "\(Config.file.uploadPath)/\(subfolder)"
+            
+            // Build upload path - use subfolder only if uploadPath is empty
+            let uploadPath: String
+            if Config.file.uploadPath.isEmpty {
+                uploadPath = "/\(subfolder)"
+            } else {
+                uploadPath = "\(Config.file.uploadPath)/\(subfolder)"
+            }
 
             var sambaSuccess = false
             var nextcloudFilePath: String?
@@ -680,11 +687,21 @@ func runSetup() {
     
     print("Samba shares (mount:path pairs, comma-separated, or empty) []: ", terminator: "")
     if let input = readLine(), !input.isEmpty {
-        config.sambaShares = input.components(separatedBy: ",").compactMap { pair in
-            let parts = pair.trimmingCharacters(in: .whitespaces).components(separatedBy: ":")
-            guard parts.count == 2 else { return nil }
-            return SambaShare(mountPath: parts[0].trimmingCharacters(in: .whitespaces),
-                            nextcloudPath: parts[1].trimmingCharacters(in: .whitespaces))
+        // Handle single path without colon (assume same path for both)
+        if !input.contains(":") {
+            config.sambaShares = [SambaShare(mountPath: input, nextcloudPath: input)]
+        } else {
+            config.sambaShares = input.components(separatedBy: ",").compactMap { pair in
+                let parts = pair.trimmingCharacters(in: .whitespaces).components(separatedBy: ":")
+                if parts.count == 2 {
+                    return SambaShare(mountPath: parts[0].trimmingCharacters(in: .whitespaces),
+                                    nextcloudPath: parts[1].trimmingCharacters(in: .whitespaces))
+                } else if parts.count == 1 {
+                    let path = parts[0].trimmingCharacters(in: .whitespaces)
+                    return SambaShare(mountPath: path, nextcloudPath: path)
+                }
+                return nil
+            }
         }
         
         // Ask for SSH scan config if Samba shares are configured

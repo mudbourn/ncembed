@@ -396,7 +396,7 @@ class ClipProcessor {
             }
 
             let url = Config.file.useNcembed
-                ? "https://\(Config.file.ncembedDomain)/embed/\(finalToken)"
+                ? "https://\(Config.file.ncembedDomain)/s/\(finalToken)"
                 : "\(Config.file.nextcloudURL)/s/\(finalToken)"
 
             NSPasteboard.general.clearContents()

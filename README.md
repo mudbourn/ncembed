@@ -36,12 +36,12 @@ Nextcloud, and copies an embeddable share link to your clipboard — all automat
  ├─────────────────────────────┤
  │  Status: Watching           │
  │                             │
- │  Copy Last Link       ⌘C   │
- │  Tail Log             ⌘L   │
+ │  Copy Last Link       ⌘C    │
+ │  Tail Log             ⌘L    │
  │  Clear Log                  │
  │                             │
- │  Restart              ⌘R   │
- │  Quit                 ⌘Q   │
+ │  Restart              ⌘R    │
+ │  Quit                 ⌘Q    │
  └─────────────────────────────┘
 ```
 

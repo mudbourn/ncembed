@@ -665,7 +665,15 @@ func runSetup() {
     print("Setting up clip-watcher configuration...")
     print("")
     
-    var config = ConfigFile.default
+    // Load existing config if available
+    var config: ConfigFile
+    if let data = try? Data(contentsOf: URL(fileURLWithPath: Config.configFile)),
+       let existing = try? JSONDecoder().decode(ConfigFile.self, from: data) {
+        config = existing
+        print("(Using existing config as defaults)")
+    } else {
+        config = ConfigFile.default
+    }
     
     print("Watch directory [\(config.watchDir)]: ", terminator: "")
     if let input = readLine(), !input.isEmpty { config.watchDir = input }
@@ -673,19 +681,20 @@ func runSetup() {
     print("Nextcloud URL [\(config.nextcloudURL)]: ", terminator: "")
     if let input = readLine(), !input.isEmpty { config.nextcloudURL = input }
     
-    print("Nextcloud username: ", terminator: "")
-    if let input = readLine() { config.nextcloudUser = input }
+    print("Nextcloud username [\(config.nextcloudUser)]: ", terminator: "")
+    if let input = readLine(), !input.isEmpty { config.nextcloudUser = input }
     
-    print("Nextcloud password: ", terminator: "")
-    if let input = readLine() { config.nextcloudPass = input }
+    print("Nextcloud password [********]: ", terminator: "")
+    if let input = readLine(), !input.isEmpty { config.nextcloudPass = input }
     
     print("ncembed domain [\(config.ncembedDomain)]: ", terminator: "")
     if let input = readLine(), !input.isEmpty { config.ncembedDomain = input }
     
-    print("Use ncembed links? (y/n) [y]: ", terminator: "")
-    if let input = readLine() { config.useNcembed = input.lowercased() != "n" }
+    print("Use ncembed links? (y/n) [\(config.useNcembed ? "y" : "n")]: ", terminator: "")
+    if let input = readLine(), !input.isEmpty { config.useNcembed = input.lowercased() != "n" }
     
-    print("Samba shares (mount:path pairs, comma-separated, or empty) []: ", terminator: "")
+    let existingSamba = config.sambaShares.map { "\($0.mountPath):\($0.nextcloudPath)" }.joined(separator: ",")
+    print("Samba shares (mount:path pairs, comma-separated) [\(existingSamba)]: ", terminator: "")
     if let input = readLine(), !input.isEmpty {
         // Handle single path without colon (assume same path for both)
         if !input.contains(":") {
@@ -708,16 +717,21 @@ func runSetup() {
         if !config.sambaShares.isEmpty {
             print("")
             print("Nextcloud file scan (forces Nextcloud to index Samba-copied files)")
-            print("SSH host (e.g., user@server, or empty to skip) []: ", terminator: "")
+            let existingHost = config.sshScan?.host ?? ""
+            print("SSH host (e.g., user@server, or empty to skip) [\(existingHost)]: ", terminator: "")
             if let host = readLine(), !host.isEmpty {
-                print("Docker container name [nextcloud]: ", terminator: "")
-                let container = readLine() ?? "nextcloud"
-                let actualContainer = container.isEmpty ? "nextcloud" : container
+                let existingContainer = config.sshScan?.container ?? "nextcloud"
+                print("Docker container name [\(existingContainer)]: ", terminator: "")
+                let container = readLine() ?? existingContainer
+                let actualContainer = container.isEmpty ? existingContainer : container
                 
-                print("Scan path (e.g., /username/files/ExternalSSD) []: ", terminator: "")
+                let existingScanPath = config.sshScan?.scanPath ?? ""
+                print("Scan path (e.g., /username/files/ExternalSSD) [\(existingScanPath)]: ", terminator: "")
                 if let scanPath = readLine(), !scanPath.isEmpty {
                     config.sshScan = SSHScan(host: host, container: actualContainer, scanPath: scanPath)
                 }
+            } else if !existingHost.isEmpty {
+                print("Keeping existing SSH scan config")
             }
         }
     }

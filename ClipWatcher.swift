@@ -14,6 +14,7 @@ struct ConfigFile: Codable {
     var ncembedDomain: String
     var useNcembed: Bool
     var sambaShares: [SambaShare]
+    var sshScan: SSHScan?  // Optional: trigger Nextcloud file scan via SSH
     
     static let `default` = ConfigFile(
         watchDir: "~/Movies/Captures",
@@ -23,13 +24,20 @@ struct ConfigFile: Codable {
         uploadPath: "/Videos/clips",
         ncembedDomain: "embed.your-nextcloud.example.com",
         useNcembed: true,
-        sambaShares: []
+        sambaShares: [],
+        sshScan: nil
     )
 }
 
 struct SambaShare: Codable {
     var mountPath: String
     var nextcloudPath: String
+}
+
+struct SSHScan: Codable {
+    var host: String          // SSH host (e.g., "user@server")
+    var container: String     // Docker container name (e.g., "nextcloud")
+    var scanPath: String      // Path to scan (e.g., "/mudbourn/files/ExternalSSD")
 }
 
 struct Config {
@@ -327,6 +335,10 @@ class ClipProcessor {
                    (try? FileManager.default.copyItem(atPath: file, toPath: dest)) != nil {
                     Logger.shared.ok("Copied to Samba: \(dest)")
                     
+                    // Trigger Nextcloud file scan to index the new file
+                    let scanPath = "\(samba.nextcloudPath)\(uploadPath)"
+                    triggerFileScan(path: scanPath)
+                    
                     // Try to create share via Samba path
                     let ncPath = "\(samba.nextcloudPath)\(uploadPath)/\(name)"
                     if let token = await nc.createShare(filePath: ncPath) {
@@ -419,6 +431,39 @@ class ClipProcessor {
 
     private func sambaRoot() -> SambaShare? {
         Config.file.sambaShares.first { FileManager.default.fileExists(atPath: $0.mountPath) }
+    }
+
+    func triggerFileScan(path: String) {
+        guard let ssh = Config.file.sshScan else { return }
+        
+        Logger.shared.info("Triggering Nextcloud file scan via SSH...")
+        
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        proc.arguments = [
+            ssh.host,
+            "docker", "exec", "-u", "www-data", ssh.container,
+            "php", "occ", "files:scan", "--path=\(path)", "-q"
+        ]
+        
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            
+            if proc.terminationStatus == 0 {
+                Logger.shared.ok("File scan completed: \(path)")
+            } else {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8) ?? ""
+                Logger.shared.warn("File scan may have issues: \(output.prefix(200))")
+            }
+        } catch {
+            Logger.shared.error("File scan failed: \(error)")
+        }
     }
 
     private func removeInFlight(_ f: String) {
@@ -640,6 +685,23 @@ func runSetup() {
             guard parts.count == 2 else { return nil }
             return SambaShare(mountPath: parts[0].trimmingCharacters(in: .whitespaces),
                             nextcloudPath: parts[1].trimmingCharacters(in: .whitespaces))
+        }
+        
+        // Ask for SSH scan config if Samba shares are configured
+        if !config.sambaShares.isEmpty {
+            print("")
+            print("Nextcloud file scan (forces Nextcloud to index Samba-copied files)")
+            print("SSH host (e.g., user@server, or empty to skip) []: ", terminator: "")
+            if let host = readLine(), !host.isEmpty {
+                print("Docker container name [nextcloud]: ", terminator: "")
+                let container = readLine() ?? "nextcloud"
+                let actualContainer = container.isEmpty ? "nextcloud" : container
+                
+                print("Scan path (e.g., /username/files/ExternalSSD) []: ", terminator: "")
+                if let scanPath = readLine(), !scanPath.isEmpty {
+                    config.sshScan = SSHScan(host: host, container: actualContainer, scanPath: scanPath)
+                }
+            }
         }
     }
     

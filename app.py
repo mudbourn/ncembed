@@ -80,7 +80,7 @@ def get_share_info(token):
             timeout=5,
         )
         if r.status_code not in (200, 207):
-            return None
+            return None  # don't cache failures
         root = ET.fromstring(r.text)
         ns = {"d": "DAV:"}
         name = root.findtext(".//d:displayname", namespaces=ns) or ""
@@ -119,7 +119,7 @@ def get_folder_contents(token):
             timeout=10,
         )
         if r.status_code not in (200, 207):
-            return []
+            return []  # don't cache failures
         root = ET.fromstring(r.text)
         ns = {"d": "DAV:"}
         items = []
@@ -263,6 +263,11 @@ def embed(token):
     # If this token points to a folder, serve the slideshow instead
     if info and info.get("is_folder"):
         return folder_embed(token)
+    # Fallback: if PROPFIND Depth:0 failed, try the folder listing directly
+    if info is None:
+        folder_items = get_folder_contents(token)
+        if folder_items:
+            return folder_embed(token)
     mimetype = info["mimetype"] if info else ""
     filename = info["name"] if info else ""
     direct_url = get_direct_url(token)

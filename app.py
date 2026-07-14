@@ -67,6 +67,7 @@ def get_share_info(token):
   <d:prop>
     <d:displayname/>
     <d:getcontenttype/>
+    <d:resourcetype/>
   </d:prop>
 </d:propfind>"""
     try:
@@ -84,7 +85,8 @@ def get_share_info(token):
         ns = {"d": "DAV:"}
         name = root.findtext(".//d:displayname", namespaces=ns) or ""
         mimetype = root.findtext(".//d:getcontenttype", namespaces=ns) or ""
-        result = {"name": name, "mimetype": mimetype}
+        is_folder = root.find(".//d:resourcetype/d:collection", ns) is not None
+        result = {"name": name, "mimetype": mimetype, "is_folder": is_folder}
         _cache_set(token, result)
         return result
     except Exception:
@@ -239,8 +241,8 @@ def index():
         "<h2>ncembed</h2>"
         "<p>Usage:</p>"
         "<ul>"
-        "<li><code>/s/&lt;token&gt;</code> — single file embed</li>"
-        "<li><code>/f/&lt;token&gt;</code> — folder slideshow (cycles through images/videos)</li>"
+        "<li><code>/s/&lt;token&gt;</code> — embed a file or folder (folders show as slideshow)</li>"
+        "<li><code>/f/&lt;token&gt;</code> — folder slideshow (alias)</li>"
         "</ul>",
         mimetype="text/html"
     )
@@ -258,6 +260,9 @@ def prefetch(token):
 @app.route("/s/<token>")
 def embed(token):
     info = get_share_info(token)
+    # If this token points to a folder, serve the slideshow instead
+    if info and info.get("is_folder"):
+        return folder_embed(token)
     mimetype = info["mimetype"] if info else ""
     filename = info["name"] if info else ""
     direct_url = get_direct_url(token)

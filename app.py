@@ -6,6 +6,7 @@ import random
 import struct
 import time
 import threading
+from urllib.parse import quote as url_quote
 import requests
 import xml.etree.ElementTree as ET
 from flask import Flask, Response, request
@@ -89,6 +90,58 @@ def get_share_info(token):
     except Exception:
         pass
     return None
+
+def get_folder_contents(token):
+    """List the media files inside a shared folder via WebDAV PROPFIND Depth:1."""
+    cached = _cache_get(f"folder:{token}")
+    if cached is not None:
+        return cached
+
+    webdav_url = f"{NEXTCLOUD_URL}/public.php/webdav/"
+    propfind_body = """<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+  <d:prop>
+    <d:displayname/>
+    <d:getcontenttype/>
+    <d:resourcetype/>
+    <d:getcontentlength/>
+  </d:prop>
+</d:propfind>"""
+    try:
+        r = requests.request(
+            "PROPFIND",
+            webdav_url,
+            data=propfind_body,
+            auth=(token, ""),
+            headers={"Depth": "1", "Content-Type": "application/xml"},
+            timeout=10,
+        )
+        if r.status_code not in (200, 207):
+            return []
+        root = ET.fromstring(r.text)
+        ns = {"d": "DAV:"}
+        items = []
+        for resp in root.findall("d:response", ns):
+            href = resp.findtext("d:href", namespaces=ns) or ""
+            name = resp.findtext(".//d:displayname", namespaces=ns) or ""
+            mimetype = resp.findtext(".//d:getcontenttype", namespaces=ns) or ""
+            is_col = resp.find(".//d:resourcetype/d:collection", ns) is not None
+            size = resp.findtext(".//d:getcontentlength", namespaces=ns) or "0"
+            if is_col:
+                continue  # skip subdirectories
+            if is_video(mimetype, name) or is_image(mimetype, name):
+                items.append({
+                    "name": name,
+                    "mimetype": mimetype,
+                    "is_video": is_video(mimetype, name),
+                    "size": int(size),
+                })
+        _cache_set(f"folder:{token}", items)
+        return items
+    except Exception:
+        pass
+    return []
+
 
 def get_image_dimensions(url):
     try:
@@ -183,7 +236,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 @app.route("/")
 def index():
     return Response(
-        "<h2>ncembed</h2><p>Usage: <code>/s/&lt;nextcloud-share-token&gt;</code></p>",
+        "<h2>ncembed</h2>"
+        "<p>Usage:</p>"
+        "<ul>"
+        "<li><code>/s/&lt;token&gt;</code> — single file embed</li>"
+        "<li><code>/f/&lt;token&gt;</code> — folder slideshow (cycles through images/videos)</li>"
+        "</ul>",
         mimetype="text/html"
     )
 
@@ -258,6 +316,146 @@ def embed(token):
         umami_script=umami_script,
     )
     return Response(html_out, mimetype="text/html")
+
+# ── Folder slideshow ────────────────────────────────────────────────────────
+
+FOLDER_SLIDESHOW_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <meta property="og:site_name" content="{site_name}">
+  <meta property="og:title" content="{title}">
+  <meta property="og:url" content="{author_url}">
+  <meta property="og:description" content="{description}">
+  {og_media}
+  <meta name="theme-color" content="{color}">
+  {umami_script}
+  <meta name="twitter:card" content="{twitter_card}">
+  <meta name="twitter:title" content="{title}">
+  <meta name="twitter:player" content="{first_url}">
+  <style>
+    * {{ margin:0; padding:0; box-sizing:border-box; }}
+    body {{ background:#000; height:100vh; overflow:hidden; }}
+    .slideshow {{ position:relative; width:100vw; height:100vh; }}
+    .slideshow img,
+    .slideshow video {{
+      position:absolute; top:0; left:0;
+      width:100%; height:100%;
+      object-fit:contain;
+      opacity:0;
+      transition: opacity {fade_ms}ms ease-in-out;
+    }}
+    .slideshow img.active,
+    .slideshow video.active {{ opacity:1; }}
+  </style>
+</head>
+<body>
+  <div class="slideshow" id="slideshow">
+    {media_tags}
+  </div>
+  <script>
+    (function() {{
+      var items = document.querySelectorAll('.slideshow img, .slideshow video');
+      if (!items.length) return;
+      var idx = 0;
+      var fadeMs = {fade_ms};
+      var imageDuration = {image_duration_ms};
+
+      function show(i) {{
+        items.forEach(function(el) {{ el.classList.remove('active'); }});
+        items[i].classList.add('active');
+      }}
+
+      function next() {{
+        // pause any video that was playing
+        var prev = items[idx];
+        if (prev.tagName === 'VIDEO') {{ prev.pause(); prev.currentTime = 0; }}
+        idx = (idx + 1) % items.length;
+        show(idx);
+        scheduleNext();
+      }}
+
+      function scheduleNext() {{
+        var cur = items[idx];
+        if (cur.tagName === 'VIDEO') {{
+          cur.play();
+          cur.onended = next;
+        }} else {{
+          setTimeout(next, imageDuration);
+        }}
+      }}
+
+      show(0);
+      scheduleNext();
+    }})();
+  </script>
+</body>
+</html>"""
+
+
+@app.route("/f/<token>")
+def folder_embed(token):
+    items = get_folder_contents(token)
+    if not items:
+        return Response(
+            "<h2>Empty or inaccessible folder</h2>",
+            mimetype="text/html",
+            status=404,
+        )
+
+    # Build per-item direct URLs and tags
+    media_tags = []
+    first_url = ""
+    first_preview_url = ""
+    for i, item in enumerate(items):
+        fname_encoded = url_quote(item["name"])
+        item_url = f"{NEXTCLOUD_URL}/public.php/webdav/{fname_encoded}"
+        if i == 0:
+            first_url = item_url
+            if item["is_video"]:
+                first_preview_url = EMBED_THUMBNAILS[0] if EMBED_THUMBNAILS else ""
+            else:
+                first_preview_url = f"{NEXTCLOUD_URL}/index.php/s/{token}/preview?file=/{fname_encoded}"
+        if item["is_video"]:
+            tag = f'<video src="{item_url}" preload="metadata" muted></video>'
+        else:
+            tag = f'<img src="{item_url}" alt="{html.escape(item["name"])}">'
+        media_tags.append(tag)
+
+    chosen, thumbnail_url, color = pick_theme()
+    title = html.escape(chosen) if chosen else f"Shared folder ({token})"
+    description = f"{len(items)} items"
+    site_name = EMBED_SITE_NAME
+
+    if EMBED_UMAMI_SCRIPT_URL and EMBED_UMAMI_WEBSITE_ID and EMBED_UMAMI_HOST_URL:
+        umami_script = f'<!-- Umami analytics -->\n  <script defer src="{EMBED_UMAMI_SCRIPT_URL}" data-website-id="{EMBED_UMAMI_WEBSITE_ID}" data-host-url="{EMBED_UMAMI_HOST_URL}"></script>'
+    else:
+        umami_script = ""
+
+    # OG tags — use the first item so embeds show something meaningful
+    og_image = first_preview_url or (thumbnail_url if thumbnail_url else "")
+    og_media = '<meta property="og:type" content="website">'
+    if og_image:
+        og_media += f'\n  <meta property="og:image" content="{og_image}">'
+    twitter_card = "summary_large_image"
+
+    html_out = FOLDER_SLIDESHOW_TEMPLATE.format(
+        site_name=site_name,
+        title=title,
+        description=description,
+        author_url=EMBED_AUTHOR_URL,
+        color=color,
+        og_media=og_media,
+        twitter_card=twitter_card,
+        first_url=first_url,
+        umami_script=umami_script,
+        media_tags="\n    ".join(media_tags),
+        fade_ms=1500,
+        image_duration_ms=5000,
+    )
+    return Response(html_out, mimetype="text/html")
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
